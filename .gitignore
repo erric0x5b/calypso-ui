@@ -1,0 +1,28 @@
+# --- runtime / logs ---
+logs/
+**/logs/
+*.log
+*.csv
+*.jsonl
+
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# --- node (se in futuro React) ---
+node_modules/
+dist/
+build/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- docker ---
+*.pid

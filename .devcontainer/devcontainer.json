@@ -1,0 +1,14 @@
+{
+  "name": "calypso-ui",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "backend",
+  "workspaceFolder": "/app",
+  "shutdownAction": "none",
+  "overrideCommand": false,
+  "extensions": [
+    "ms-python.python",
+    "ms-python.vscode-pylance"
+  ],
+  "postCreateCommand": "python -m pip install -r /app/backend/requirements.txt || true",
+  "remoteUser": "ETR"
+}

@@ -1,0 +1,48 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: calypso-ui-backend
+    environment:
+      CALYPSO_HTTP_PORT: "8080"
+      CALYPSO_UDP_RX_PORT: "14590"
+      CALYPSO_UDP_TX_PORT: "14591"
+      CALYPSO_LOG_DIR: "/data/deepex_logs"
+      CALYPSO_UDP_TX_HOST: "udp-sim"
+    ports:
+      - "8090:8080"
+      - "14590:14590/udp"
+      - "14591:14591/udp"
+    volumes:
+      - .:/app
+      - /share/Container/calypso-ui/logs:/data/deepex_logs
+    restart: unless-stopped
+    networks:
+      calypso-net:
+        aliases:
+          - backend
+
+  udp-sim:
+    image: python:3.11-slim
+    container_name: calypso-ui-udp-sim
+    depends_on:
+      - backend
+    environment:
+      SIM_TARGET_HOST: "backend"
+      SIM_TARGET_PORT: "14590"
+      SIM_CMD_LISTEN_PORT: "14591"
+      SIM_RATE_ENV_HZ: "10"
+      SIM_RATE_ESC_HZ: "10"
+      SIM_RATE_HB_HZ: "1"
+    volumes:
+      - ./simulator:/simulator
+    working_dir: /simulator
+    command: ["python", "udp_sim.py"]
+    restart: unless-stopped
+    networks:
+      - calypso-net
+
+networks:
+  calypso-net:
+    driver: bridge
