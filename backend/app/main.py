@@ -13,6 +13,12 @@ import json
 from fastapi import Body
 from fastapi.responses import JSONResponse
 
+import re
+import io
+import zipfile
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+
 
 app = FastAPI(title="calypso-ui backend")
 
@@ -79,7 +85,24 @@ state = {
     "last_update_ms": None,
 }
 
+state["logging"] = {
+    "enabled": True,                 # di default ON (come ora)
+    "sid": datetime.now().strftime("%Y%m%d_%H%M%S"),
+    "telemetry_path": telemetry_path,
+    "alarms_path": alarms_path,
+    "events_path": events_path,
+}
+
+
 ws_clients: set[WebSocket] = set()
+
+def new_session_paths(sid: str):
+    t = os.path.join(LOG_DIR, f"telemetry_{sid}.csv")
+    a = os.path.join(LOG_DIR, f"alarms_{sid}.csv")
+    e = os.path.join(LOG_DIR, f"events_{sid}.jsonl")
+    for pth in (t, a, e):
+        open(pth, "a", encoding="utf-8").close()
+    return t, a, e
 
 def save_lights_cfg(cfg: dict):
     os.makedirs(os.path.dirname(LIGHTS_CFG_PATH), exist_ok=True)
@@ -254,9 +277,12 @@ def parse_nmea_line(line: str):
     }, None
 
 def append_telemetry_csv(p):
-    # Minimal CSV: ts_ms,src,msg,raw
+    log = state.get("logging", {})
+    if not log.get("enabled", True):
+        return
+    path = log.get("telemetry_path", telemetry_path)
     raw_escaped = p["raw"].replace('"', '""')
-    with open(telemetry_path, "a", encoding="utf-8") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(f'{p["ts_ms"]},{p["src"]},{p["msg"]},"{raw_escaped}"\n')
 
 async def ws_broadcast(obj: dict):
@@ -480,3 +506,73 @@ def api_cmd_lights_channel(payload: dict = Body(...)):
     # send_cmd_udp(cmd_id=cmd_id, kv=cmd_kv)
 
     return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids}
+
+SESSION_RE = re.compile(r"^(telemetry|alarms|events)_(\d{8}_\d{6})\.(csv|jsonl)$")
+
+def list_sessions(log_dir: str):
+    sessions = {}  # sid -> {"telemetry":..., "alarms":..., "events":...}
+    try:
+        for name in os.listdir(log_dir):
+            m = SESSION_RE.match(name)
+            if not m:
+                continue
+            kind, sid, ext = m.group(1), m.group(2), m.group(3)
+            sessions.setdefault(sid, {})
+            sessions[sid][kind] = os.path.join(log_dir, name)
+    except FileNotFoundError:
+        return {}
+
+    # ordina per sid desc (timestamp)
+    return dict(sorted(sessions.items(), key=lambda kv: kv[0], reverse=True))
+
+@app.get("/api/log/sessions")
+def api_log_sessions():
+    sessions = list_sessions(LOG_DIR)
+    # ritorna solo nomi file (non path)
+    out = []
+    for sid, files in sessions.items():
+        out.append({
+            "sid": sid,
+            "telemetry": os.path.basename(files.get("telemetry","")) if "telemetry" in files else None,
+            "alarms": os.path.basename(files.get("alarms","")) if "alarms" in files else None,
+            "events": os.path.basename(files.get("events","")) if "events" in files else None,
+        })
+    return {"sessions": out}
+
+@app.get("/api/log/zip")
+def api_log_zip(sid: str):
+    # sanitize sid: solo YYYYMMDD_HHMMSS
+    if not re.fullmatch(r"\d{8}_\d{6}", sid):
+        raise HTTPException(status_code=400, detail="bad sid")
+
+    sessions = list_sessions(LOG_DIR)
+    if sid not in sessions:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    files = sessions[sid]
+    # crea zip in memoria (ok per demo). Se i file diventano grossi, lo streamiamo su temp file.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for kind in ("telemetry", "alarms", "events"):
+            p = files.get(kind)
+            if p and os.path.isfile(p):
+                z.write(p, arcname=os.path.basename(p))
+        # opzionale: metti anche un manifest.json
+        manifest = {
+            "sid": sid,
+            "created_utc": datetime.utcnow().isoformat() + "Z",
+            "files": {k: os.path.basename(v) for k, v in files.items()}
+        }
+        z.writestr(f"manifest_{sid}.json", str(manifest).replace("'", '"'))
+
+    buf.seek(0)
+    filename = f"deepex_logs_{sid}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@app.get("/api/log/status")
+def api_log_status():
+    return state.get("logging", {"enabled": False, "sid": None})

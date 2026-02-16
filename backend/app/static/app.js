@@ -505,6 +505,9 @@ async function init() {
   setupLightsConfigToggle();
   el("lgt_cfg_save").onclick = saveLightsCfg;
 
+  setupLogs();
+  await refreshLogStatus();
+  await refreshLogSessions();
 
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
@@ -817,16 +820,15 @@ function init3D(){
   three.renderer = renderer;
   three.root = root;
   three.inited = true;
+
   if(three.animRunning) return;
     three.animRunning = true;
-
 
   function animate(){
     requestAnimationFrame(animate);
     resize3DIfNeeded();
     renderer.render(scene, camera);
     three.rafId = requestAnimationFrame(animate);
-
   }
   
   animate();
@@ -863,3 +865,58 @@ function stop3D(){
     three.rafId = null;
     three.animRunning = false;
   }
+
+  async function refreshLogSessions(){
+  const j = await fetch("/api/log/sessions").then(r=>r.json());
+  const s = j.sessions || [];
+  el("log_sessions").innerHTML = s.slice(0,8).map(x=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
+      <div class="mono">${x.sid}</div>
+      <div>
+        <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
+      </div>
+    </div>
+  `).join("") || "<div class='mono'>No sessions</div>";
+}
+
+async function refreshLogStatus(){
+  const j = await fetch("/api/log/status").then(r=>r.json());
+  const enabled = !!j.enabled;
+  const sid = j.sid || "-";
+  el("log_status").textContent = `${enabled ? "ON" : "OFF"}  ${sid}`;
+
+  const zip = el("log_zip");
+  if(sid && sid !== "-"){
+    zip.href = `/api/log/zip?sid=${sid}`;
+    zip.style.pointerEvents = "auto";
+    zip.style.opacity = "1";
+  }else{
+    zip.href = "#";
+    zip.style.pointerEvents = "none";
+    zip.style.opacity = ".5";
+  }
+}
+
+async function refreshLogSessions(){
+  const j = await fetch("/api/log/sessions").then(r=>r.json());
+  const s = j.sessions || [];
+  el("log_sessions").innerHTML = s.slice(0,6).map(x=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
+      <span>${x.sid}</span>
+      <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
+    </div>
+  `).join("") || "<div>no sessions</div>";
+}
+
+function setupLogs(){
+  el("log_start").onclick = async ()=>{
+    await fetch("/api/log/start", {method:"POST"});
+    await refreshLogStatus();
+    await refreshLogSessions();
+  };
+  el("log_stop").onclick = async ()=>{
+    await fetch("/api/log/stop", {method:"POST"});
+    await refreshLogStatus();
+    await refreshLogSessions();
+  };
+}

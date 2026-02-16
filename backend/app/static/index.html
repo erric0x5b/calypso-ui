@@ -112,15 +112,21 @@
     </div>
   </div>
 
-
   <div class="layout">
-    <div id="main" class="main">
-      <div class="card">
-        <h3>Main</h3>
-        <div id="main_slot"></div>
+    <div id="dock" class="dock"></div>
+
+    <div class="card">
+      <div class="cardHead"><div class="cardTitle">Mission Log</div></div>
+      <div class="cardBody">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button id="log_start">START</button>
+          <button id="log_stop">STOP</button>
+          <span class="pill mono" id="log_status">—</span>
+          <a class="btn" id="log_zip" href="#" style="pointer-events:none;opacity:.5;">ZIP</a>
+        </div>
+        <div style="margin-top:10px;" id="log_sessions" class="mono">—</div>
       </div>
     </div>
-    <div id="dock" class="dock"></div>
 
     <div class="card">
       <h3>Nodes</h3>
@@ -136,41 +142,6 @@
       <h3>Power SCADA</h3>
       <div id="power_scada_badges"></div>
       <div id="power_scada_svg" style="margin-top:10px;"></div>
-    </div>
-
-    <div class="card">
-      <h3>Luci</h3>
-
-      <div class="cardBody">
-        <div class="row">
-          <button id="lgt_btn_cfg" class="iconBtn">CONFIG</button>
-          <span class="pill" id="lgt_cfg_status">—</span>
-          <span class="pill" id="lgt_ack">—</span>
-        </div>
-
-        <div id="lgt_ctrl" style="margin-top:10px;"></div>
-
-        <div id="lgt_cfg_wrap" class="cfgWrap hidden" style="margin-top:12px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <b>Lights mapping</b>
-            <button id="lgt_cfg_save" class="iconBtn">Save</button>
-          </div>
-          <div id="lgt_cfg"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>ESC</h3>
-      <div id="esc"></div>
-    </div>
-
-    <div class="card">
-      <h3>Alarms</h3>
-      <div><b>Active</b></div>
-      <div id="alarms_active"></div>
-      <div style="margin-top:10px"><b>Last 10</b></div>
-      <div id="alarms_hist"></div>
     </div>
 
     <div class="card">
