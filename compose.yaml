@@ -22,7 +22,8 @@ services:
       calypso-net:
         aliases:
           - backend
-
+    extra_hosts:
+      - "blueos:192.168.2.2"
   udp-sim:
     image: python:3.11-slim
     container_name: calypso-ui-udp-sim

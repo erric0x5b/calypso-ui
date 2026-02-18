@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "host": "blueos",
+  "fallback_ip": "192.168.2.2",
+  "port": 9092,
+  "device_id": 1,
+
+  "gain_setting": 1,
+  "transmit_duration_us": 500,
+  "sample_period_25ns": 4000,
+  "frequency_khz": 750,
+  "num_samples": 800,
+
+  "start_angle_grad": 0,
+  "stop_angle_grad": 399,
+  "num_steps": 1,
+  "delay_ms": 0
+}

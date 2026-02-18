@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
+from backend.app.sonar_ping360 import load_cfg as ping360_load_cfg, save_cfg as ping360_save_cfg, ping360_task
+
 
 app = FastAPI(title="calypso-ui backend")
 
@@ -30,6 +32,25 @@ def ui():
 
 def now_ms() -> int:
     return int(asyncio.get_running_loop().time() * 1000) & 0xFFFFFFFF
+
+# -------- Sonar Ping360 --------
+ping360_stop = asyncio.Event()
+
+@app.on_event("startup")
+async def startup():
+    # ... tuo UDP server ecc.
+
+    async def ws_broadcast(payload: dict):
+        dead = []
+        for c in list(ws_clients):
+            try:
+                await c.send_json(payload)
+            except Exception:
+                dead.append(c)
+        for c in dead:
+            ws_clients.discard(c)
+
+    asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
 
 # -------- Lights Config --------
 LIGHTS_CFG_PATH = os.getenv("CALYPSO_LIGHTS_CFG", "/data/deepex_logs/lights_config.json")
@@ -564,3 +585,12 @@ def api_log_stop():
 @app.get("/api/config/lights")
 def api_get_lights_cfg():
     return load_lights_cfg()
+
+@app.get("/api/sonar/ping360/config")
+def get_ping360_cfg():
+    return ping360_load_cfg()
+
+@app.post("/api/sonar/ping360/config")
+def set_ping360_cfg(cfg: dict = Body(...)):
+    ping360_save_cfg(cfg)
+    return {"ok": True}

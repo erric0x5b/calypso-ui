@@ -631,6 +631,10 @@ async function init() {
           render(snapshot);
         });
       }
+      if(msg.type === "sonar"){
+        if(window.sonarPing360) window.sonarPing360.apply(msg);
+        return;
+      }
     } catch (e) { }
   };
 }
@@ -736,7 +740,6 @@ function renderMainSlot(tab){
   }
 
   if(tab === "video"){
-    // mount se non montato
     mountVideo(videoState.kind, videoState.url);
     return;
   }
@@ -1199,10 +1202,26 @@ function renderMotorsRings(state){
   setHTML("motors_right", right);
 }
 
+// ---------------- VIDEO ----------------
 let videoState = {
   kind: "mjpeg",   // "mjpeg" | "video"
   url: "",
 };
+
+function loadVideoPrefs(){
+  try{
+    const j = JSON.parse(localStorage.getItem("calypso_video") || "{}");
+    return {
+      kind: j.kind || "auto",   // auto | mjpeg | video
+      url: j.url || "",
+    };
+  }catch(e){
+    return { kind:"auto", url:"" };
+  }
+}
+function saveVideoPrefs(){
+  localStorage.setItem("calypso_video", JSON.stringify(videoState));
+}
 
 function setupVideo(){
   const src = el("video_source");
@@ -1212,17 +1231,13 @@ function setupVideo(){
 
   if(!src || !url || !apply || !stop) return;
 
-  // default demo (metti quello che preferisci)
-  if(!videoState.url){
-    videoState.url = "/static/demo.mp4";   // oppure un tuo endpoint MJPEG
-    url.value = videoState.url;
-  }
-
   src.value = videoState.kind;
+  url.value = videoState.url;
 
   apply.onclick = () => {
     videoState.kind = src.value;
     videoState.url = (url.value || "").trim();
+    saveVideoPrefs();
     mountVideo(videoState.kind, videoState.url);
   };
 
@@ -1230,13 +1245,20 @@ function setupVideo(){
     unmountVideo();
     setText("video_status", "stopped");
   };
-
-  // opzionale: auto apply al primo ingresso nella tab video
 }
 
 function unmountVideo(){
   const slot = el("video_slot");
   if(slot) slot.innerHTML = "";
+}
+
+function guessKind(url){
+  const u = (url || "").toLowerCase();
+  // euristica: mjpeg spesso contiene .mjpg, mjpeg, stream, axis-cgi, etc.
+  if(u.includes(".mjpg") || u.includes("mjpeg") || u.includes("axis-cgi") || u.includes("cgi")){
+    return "mjpeg";
+  }
+  return "video";
 }
 
 function mountVideo(kind, url){
@@ -1247,11 +1269,13 @@ function mountVideo(kind, url){
 
   if(!url){
     setText("video_status", "missing url");
+    slot.innerHTML = `<div class="mono" style="margin:12px;">Inserisci un URL stream e premi APPLY.</div>`;
     return;
   }
 
-  if(kind === "mjpeg"){
-    // MJPEG: <img src="..."> (se serve cache-bust, aggiungiamo ?t=)
+  const finalKind = (kind === "auto") ? guessKind(url) : kind;
+
+  if(finalKind === "mjpeg"){
     const img = document.createElement("img");
     img.src = url;
     img.onload = () => setText("video_status", "MJPEG OK");
@@ -1260,13 +1284,11 @@ function mountVideo(kind, url){
     return;
   }
 
-  // VIDEO: mp4 / webm / webrtc url (webrtc via <video> dipende dall’URL)
   const v = document.createElement("video");
   v.autoplay = true;
-  v.muted = true;         // autoplay policy
+  v.muted = true;      // autoplay policy
   v.playsInline = true;
   v.controls = true;
-
   v.src = url;
 
   v.oncanplay = () => setText("video_status", "video OK");

@@ -3,6 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir fastapi uvicorn[standard]
+RUN pip install --no-cache-dir brping
 
 COPY backend /app/backend
 
