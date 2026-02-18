@@ -1,8 +1,27 @@
-const el = (id) => document.getElementById(id);
+//const el = (id) => document.getElementById(id);
+const el = (id) => {
+  const n = document.getElementById(id);
+  if(!n) console.warn("[DOM] missing element id:", id);
+  return n;
+};
+
+const exists = (id) => !!el(id);
 
 const fmtV = (mv) => (mv == null ? "-" : (mv / 1000).toFixed(2) + " V");
 const fmtA = (ma) => (ma == null ? "-" : (ma / 1000).toFixed(2) + " A");
 const fmtC = (dC) => (dC == null ? "-" : (dC / 10).toFixed(1) + " °C");
+
+function setText(id, txt){
+  const e = document.getElementById(id);
+  if(!e) return;
+  e.textContent = txt ?? "";
+}
+function setHTML(id, html){
+  const e = document.getElementById(id);
+  if(!e) return;
+  e.innerHTML = html ?? "";
+}
+
 
 function sevLabel(sev) {
   if (sev == 3) return "CRIT";
@@ -92,8 +111,6 @@ function renderPowerScada(state){
     </div>
   `;
 }
-
-
 
 function scadaSvg(s) {
   const b1 = (s.pods?.BAT1) || {};
@@ -273,16 +290,72 @@ function scadaSvg(s) {
 }
 
 
-function setupLights() {
-  const slider = el("lgt_dim");
-  const label = el("lgt_dim_val");
-  slider.addEventListener("input", () => label.textContent = slider.value);
 
-  el("lgt_on").onclick = () => sendLight("ON", parseInt(slider.value, 10));
-  el("lgt_off").onclick = () => sendLight("OFF", 0);
 
-  slider.addEventListener("change", () => sendLight("ON", parseInt(slider.value, 10)));
+function setupLights(){
+  const host = el("lgt_ctrl");
+  if(!host) return;
+
+  // crea UI base (4 canali)
+  host.innerHTML = `
+    <div class="lgtGrid">
+      ${[1,2,3,4].map(ch => `
+        <div class="lgtChan" data-ch="${ch}">
+          <div class="lgtTitle">CH${ch}</div>
+          <input class="lgtSlider" type="range" min="0" max="1000" value="0" step="1" />
+          <div class="lgtVal mono">0</div>
+          <div class="lgtBtns">
+            <button class="lgtOn">ON</button>
+            <button class="lgtOff">OFF</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+
+  // bind handlers
+  host.querySelectorAll(".lgtChan").forEach(card => {
+    const ch = parseInt(card.getAttribute("data-ch"), 10);
+    const slider = card.querySelector(".lgtSlider");
+    const val = card.querySelector(".lgtVal");
+    const btnOn = card.querySelector(".lgtOn");
+    const btnOff = card.querySelector(".lgtOff");
+
+    slider.addEventListener("input", () => { val.textContent = String(slider.value); });
+
+    btnOn.addEventListener("click", () => sendLight(ch, "ON", parseInt(slider.value,10)));
+    btnOff.addEventListener("click", () => sendLight(ch, "OFF", 0));
+
+    // invio “al rilascio”
+    slider.addEventListener("change", () => sendLight(ch, "ON", parseInt(slider.value,10)));
+  });
+
+  const btn = document.getElementById("lgt_cfg_toggle");
+  const body = document.getElementById("lgt_cfg_body");
+  if(btn && body){
+    // default: config visibile
+    let open = true;
+    btn.addEventListener("click", () => {
+      open = !open;
+      body.classList.toggle("hidden", !open);
+      body.style.display = open ? "" : "none";
+      btn.textContent = open ? "▾" : "▸";
+    });
+
+    // se vuoi: dopo save chiudila automaticamente
+    const save = document.getElementById("lgt_cfg_save");
+    if(save){
+      save.addEventListener("click", () => {
+        // aspetta esito save nel tuo handler, ma intanto la richiudi:
+        open = false;
+        body.classList.add("hidden");
+        body.style.display = "none";
+        btn.textContent = "▸";
+      });
+    }
+  }
 }
+
 
 let lightsCfg = null;
 
@@ -384,105 +457,118 @@ function renderLightsCtrl() {
 
 
 function render(state) {
-  // nodes
-  const nodes = state.nodes || {};
-  let nhtml = "<table><tr><th>Node</th><th>Status</th><th>Last HB</th></tr>";
-  for (const [k, v] of Object.entries(nodes)) {
-    const on = v.online ? "ok" : "bad";
-    nhtml += `<tr><td>${k}</td><td class="${on}">${v.online ? "ONLINE" : "OFFLINE"}</td><td>${v.last_hb_ms ?? "-"}</td></tr>`;
-  }
-  nhtml += "</table>";
-  el("nodes").innerHTML = nhtml;
+  // ---------- Nodes ----------
+  // const nodes = state.nodes || {};
+  // let nhtml = `<table><tr><th>Node</th><th>Status</th><th>Last HB</th></tr>`;
+  // for (const [k, v] of Object.entries(nodes)) {
+  //   const on = v.online ? "ok" : "bad";
+  //   nhtml += `<tr>
+  //     <td>${k}</td>
+  //     <td class="${on}">${v.online ? "ONLINE" : "OFFLINE"}</td>
+  //     <td>${v.last_hb_ms ?? "-"}</td>
+  //   </tr>`;
+  // }
+  // nhtml += `</table>`;
+  // setHTML("nodes", nhtml);
 
-  // pods
-  const pods = state.pods || {};
-  let phtml = "<table><tr><th>Pod</th><th>Vbatt</th><th>Ibatt</th><th>Temp</th><th>BUS</th><th>VMOT</th></tr>";
-  for (const pod of ["BAT1", "BAT2"]) {
-    const d = pods[pod] || {};
-    const bus = (d.BusConn === 1 || d.BusConn === "1") ? "ON" : "OFF";
-    const vmot = (pod === "BAT1")
-      ? vmotRow(d, ["Vmot1On", "Vmot2On", "Vmot3On"])
-      : vmotRow(d, ["Vmot4On", "Vmot5On", "Vmot6On"]);
-    phtml += `<tr><td>${pod}</td><td>${fmtV(d.Vbatt_mv)}</td><td>${fmtA(d.Ibatt_ma)}</td><td>${fmtC(d.Temp_dC)}</td><td>${bus}</td><td>${vmot}</td></tr>`;
-  }
-  phtml += "</table>";
-  el("pods").innerHTML = phtml;
+  // // ---------- Pods ----------
+  // const pods = state.pods || {};
+  // let phtml = `<table><tr><th>Pod</th><th>Vbatt</th><th>Ibatt</th><th>Temp</th><th>BUS</th><th>VMOT</th></tr>`;
+  // for (const pod of ["BAT1", "BAT2"]) {
+  //   const d = pods[pod] || {};
+  //   const bus = (d.BusConn === 1 || d.BusConn === "1") ? "ON" : "OFF";
+  //   const vmot = (pod === "BAT1")
+  //     ? vmotRow(d, ["Vmot1On", "Vmot2On", "Vmot3On"])
+  //     : vmotRow(d, ["Vmot4On", "Vmot5On", "Vmot6On"]);
 
-  // power scada unified
-  el("power_scada_badges").innerHTML = renderPowerScada(state);
-  el("power_scada_svg").innerHTML = scadaSvg(state);
-  el("mission_log").textContent = `last_update_ms: ${state.last_update_ms ?? "-"}\nudp_rx: ${state.counters?.udp_rx ?? "-"}`;
+  //   phtml += `<tr>
+  //     <td>${pod}</td>
+  //     <td>${fmtV(d.Vbatt_mv)}</td>
+  //     <td>${fmtA(d.Ibatt_ma)}</td>
+  //     <td>${fmtC(d.Temp_dC)}</td>
+  //     <td>${bus}</td>
+  //     <td>${vmot}</td>
+  //   </tr>`;
+  // }
+  // phtml += `</table>`;
+  // setHTML("pods", phtml);
 
-
-  // esc
+  // ---------- ESC ----------
   const esc = state.esc || {};
-  let ehtml = "<table><tr><th>ID</th><th>RPM</th><th>Vin</th><th>Iin</th><th>Wh</th><th>Src</th></tr>";
+  let ehtml = `<table><tr><th>ID</th><th>RPM</th><th>Vin</th><th>Iin</th><th>Wh</th><th>Src</th></tr>`;
   const ids = Object.keys(esc).map(x => parseInt(x, 10)).sort((a, b) => a - b);
   for (const id of ids) {
     const d = esc[id] || {};
-    ehtml += `<tr><td>${id}</td><td>${d.RPM ?? "-"}</td><td>${fmtV(d.InVoltage_mv)}</td><td>${fmtA(d.AvgInCur_ma)}</td><td>${d.Wh_x10 != null ? (d.Wh_x10 / 10).toFixed(1) : "-"}</td><td>${d.src ?? "-"}</td></tr>`;
+    ehtml += `<tr>
+      <td>${id}</td>
+      <td>${d.RPM ?? "-"}</td>
+      <td>${fmtV(d.InVoltage_mv)}</td>
+      <td>${fmtA(d.AvgInCur_ma)}</td>
+      <td>${d.Wh_x10 != null ? (d.Wh_x10 / 10).toFixed(1) : "-"}</td>
+      <td>${d.src ?? "-"}</td>
+    </tr>`;
   }
-  ehtml += "</table>";
-  el("esc").innerHTML = ehtml;
+  ehtml += `</table>`;
+  setHTML("esc", ehtml);
 
-  // alarms
+  // ---------- Alarms ----------
   const aa = state.alarms_active || [];
-  el("alarms_active").innerHTML = aa.length
-    ? aa.map(a => `<div class="${a.sev >= 2 ? 'bad' : 'ok'}">[${sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("")
-    : "<div class='ok'>none</div>";
+  setHTML(
+    "alarms_active",
+    aa.length
+      ? aa.map(a => `<div class="${a.sev >= 2 ? "bad" : "ok"}">[${sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("")
+      : `<div class="ok">none</div>`
+  );
 
   const hist = (state.alarms_history || []).slice(-10).reverse();
-  el("alarms_hist").innerHTML = hist.length
-    ? hist.map(a => `<div>[${sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("")
-    : "<div class='ok'>none</div>";
+  setHTML(
+    "alarms_hist",
+    hist.length
+      ? hist.map(a => `<div>[${sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("")
+      : `<div class="ok">none</div>`
+  );
 
-  // last raw + counters
-  el("last_raw").textContent = (state.__last_raw || "");
-  el("counters").innerHTML = `<div class="mono">${JSON.stringify(state.counters || {}, null, 2)}</div>`;
+  // ---------- Counters + last raw ----------
+  //setText("last_raw", state.__last_raw || "");
+ // setHTML("counters", `<div class="mono">${JSON.stringify(state.counters || {}, null, 2)}</div>`);
 
-  // Power badges in dock
-  el("power_scada_badges").innerHTML = renderPowerScada(state);
+  // ---------- Power badges (dock) ----------
+  setHTML("power_scada_badges", renderPowerScada(state));
 
-  // Dock power badges
-  const pb = document.getElementById("power_scada_badges");
-  if(pb) pb.innerHTML = renderPowerScada(state);
+  // ---------- Mission view elements (only if present) ----------
+  const mb = document.getElementById("main_power_badges");
+  const ms = document.getElementById("main_scada");
+  if (mb) mb.innerHTML = renderPowerScada(state);
+  if (ms) ms.innerHTML = scadaSvg(state);
 
-  // Main SCADA only in mission tab
-  if((uiPrefs?.mainTab || "mission") === "mission"){
-    const mb = document.getElementById("main_power_badges");
-    const ms = document.getElementById("main_scada");
-    if(mb) mb.innerHTML = renderPowerScada(state);
-    if(ms) ms.innerHTML = scadaSvg(state);
-
-    // init 3D se serve
-    //init3D();
-
-    // per ora: se non hai ancora MAVLink attitude, simulo usando ts
-    // Se in futuro metti state.att = {roll_deg,pitch_deg,yaw_deg}
+  // Attitude readout + 3D
+  const ar = document.getElementById("att_readout");
+  if (ar) {
     const att = state.att || null;
-
     let roll = 0, pitch = 0, yaw = 0;
-    if(att && (att.roll_deg!=null || att.pitch_deg!=null || att.yaw_deg!=null)){
-      roll = degToRad(att.roll_deg);
-      pitch = degToRad(att.pitch_deg);
-      yaw = degToRad(att.yaw_deg);
-    }else{
-      // demo: piccola oscillazione per vedere che funziona
+
+    if (att && (att.roll_deg != null || att.pitch_deg != null || att.yaw_deg != null)) {
+      roll  = degToRad(att.roll_deg  || 0);
+      pitch = degToRad(att.pitch_deg || 0);
+      yaw   = degToRad(att.yaw_deg   || 0);
+    } else {
       const t = (state.last_update_ms || 0) / 1000;
-      roll = Math.sin(t * 0.6) * 0.25;
+      roll  = Math.sin(t * 0.6) * 0.25;
       pitch = Math.sin(t * 0.4) * 0.18;
-      yaw = (t * 0.2);
+      yaw   = (t * 0.2);
     }
 
-    setRovAttitudeRad(roll, pitch, yaw);
+    if (typeof setRovAttitudeRad === "function") {
+      setRovAttitudeRad(roll, pitch, yaw);
+    }
 
-    const r = (roll*180/Math.PI).toFixed(1);
-    const p = (pitch*180/Math.PI).toFixed(1);
-    const y = (yaw*180/Math.PI).toFixed(1);
-    const ar = document.getElementById("att_readout");
-    if(ar) ar.textContent = `roll ${r}°  pitch ${p}°  yaw ${y}°`;
+    const r = (roll  * 180 / Math.PI).toFixed(1);
+    const p = (pitch * 180 / Math.PI).toFixed(1);
+    const y = (yaw   * 180 / Math.PI).toFixed(1);
+    ar.textContent = `roll ${r}°  pitch ${p}°  yaw ${y}°`;
   }
 }
+
 
 let snapshot = null;
 
@@ -492,14 +578,13 @@ window.addEventListener("load", () => {
 
 async function init() {
   snapshot = await fetch("/api/state").then(r => r.json());
-  render(snapshot);
-  renderWidgetsMenu();
-  setupWidgetsMenu();
-  setupCollapseButtons();
-  applyWidgetVisibility();
   setupTabs();
-
-
+  renderWidgetsMenu();
+  setupWidgetsMenu(); 
+  applyWidgetVisibility();
+  setupCollapseButtons();
+  setupLights();
+  
   await loadLightsCfg();
   el("lgt_cfg_save").onclick = saveLightsCfg;
   setupLightsConfigToggle();
@@ -508,7 +593,7 @@ async function init() {
   setupLogs();
   await refreshLogStatus();
   await refreshLogSessions();
-
+  render(snapshot);
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
 
@@ -588,54 +673,89 @@ function setupWidgetsMenu() {
   });
 }
 
-function setupCollapseButtons() {
-  document.querySelectorAll("[data-collapse]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.collapse;
-      uiPrefs.collapsed[id] = !uiPrefs.collapsed[id];
-      saveUiPrefs(uiPrefs);
-      applyWidgetVisibility();
-    });
-  });
+let collapseWired = false;
+
+function setupCollapseButtons(){
+  if(collapseWired) return;
+  collapseWired = true;
+
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-collapse]");
+    if(!b) return;
+
+    // evita doppi click / bubbling strani
+    e.preventDefault();
+    e.stopPropagation();
+
+    const card = b.closest(".card");
+    if(!card) return;
+
+    let body = card.querySelector(":scope > .cardBody");
+    if(!body) body = card.querySelector(".cardBody");
+    if(!body) return;
+
+    const isHidden = body.classList.toggle("hidden");
+    body.style.display = isHidden ? "none" : "";
+    b.textContent = isHidden ? "▸" : "▾";
+  }, true); // <- capture=true: prende il click prima di altri handler
 }
 
 function renderMainSlot(tab){
-  el("main_mode").textContent = tab.toUpperCase();
+  setText("main_mode", tab.toUpperCase()); // se non esiste, non fa nulla
 
-  if(tab === "video"){
-    el("main_slot").innerHTML = `<div class="mono">VIDEO SLOT (da integrare)</div>`;
-    return;
-  }
-  if(tab === "sonar"){
-    el("main_slot").innerHTML = `<div class="mono">SONAR SLOT (da integrare)</div>`;
-    return;
-  }
+  const m = document.getElementById("missionWrap");
+  const v = document.getElementById("videoWrap");
+  const s = document.getElementById("sonarWrap");
+
+  if(m) m.classList.toggle("hidden", tab !== "mission");
+  if(v) v.classList.toggle("hidden", tab !== "video");
+  if(s) s.classList.toggle("hidden", tab !== "sonar");
 
   if(tab === "mission"){
-    //if(tab === "sonar"){
-    // dentro renderMainSlot(tab) quando tab === "mission"
-    el("main_slot").innerHTML = `
-      <div class="missionGrid">
-        <div class="card">
-          <div class="cardHead"><div class="cardTitle">Power SCADA</div></div>
+    ensure3D(); // se ti serve (ma attenzione a non reinizializzare)
+  }
+}
+
+
+function renderMainMission(){
+  const slot = document.getElementById("main_slot");
+  if(!slot) return;
+
+  slot.innerHTML = `
+    <div class="missionWrap">
+      <div class="missionTop">
+        <div class="card missionSide">
+          <div class="cardHead"><div class="cardTitle">Motori SX</div></div>
+          <div class="cardBody"><div id="motors_left" class="motorsRings"></div></div>
+        </div>
+
+        <div class="card missionCenter">
+          <div class="cardHead"><div class="cardTitle">ROV 3D</div></div>
           <div class="cardBody">
-            <div id="main_power_badges"></div>
-            <div id="main_scada" style="margin-top:12px;"></div>
+            <div id="rov3d" class="rov3d"></div>
+            <div class="mono" id="att_readout" style="margin-top:8px;opacity:.85;">—</div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="cardHead"><div class="cardTitle">ROV 3D</div></div>
-          <div class="cardBody">
-            <div id="att_readout" class="mono" style="margin-bottom:8px;"></div>
-            <div id="rov3d" style="width:100%; height:340px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08);"></div>
-          </div>
+        <div class="card missionSide">
+          <div class="cardHead"><div class="cardTitle">Motori DX</div></div>
+          <div class="cardBody"><div id="motors_right" class="motorsRings"></div></div>
         </div>
       </div>
-    `;  
-    return;
-  };
+
+      <div class="card missionBottom">
+        <div class="cardHead"><div class="cardTitle">Power SCADA</div></div>
+        <div class="cardBody">
+          <div id="main_power_badges"></div>
+          <div id="main_scada" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  ensure3D();
 }
+
 
 function setupTabs() {
   document.querySelectorAll(".tab").forEach(t => {
@@ -657,266 +777,203 @@ function setupTabs() {
 }
 
 function setupLightsConfigToggle() {
-  const btn = el("lgt_btn_cfg");
-  const wrap = el("lgt_cfg_wrap");
+  const btn = el("lgt_cfg_toggle");
+  const wrap = el("lgt_cfg_body");
   if (!btn || !wrap) return;
-  btn.onclick = () => {
-    wrap.classList.toggle("hidden");
-  };
+  btn.onclick = () => wrap.classList.toggle("hidden");
 }
 
-let three = {
+let rov3d = {
   inited: false,
   scene: null,
   camera: null,
   renderer: null,
-  root: null,
   model: null,
-  container: null,
-  lastSize: {w:0,h:0},
-  // offset assi: se il modello non “punta” avanti correttamente, qui correggiamo
-  modelEulerOffset: {x: 0, y: 0, z: 0},
-  rafId: null, 
-  animRunning: false,
+  anim: null,
 };
 
-function init3D(){
-  const container = document.getElementById("rov3d");
-  if(!container) return;
-  if(three.inited) return;
+function init3DOnce(){
+  if(rov3d.inited) return;
 
-  // evita init se il container non ha ancora size (tab appena renderizzata)
-  const cw = container.clientWidth || 0;
-  const ch = container.clientHeight || 0;
-  if(cw < 50 || ch < 50){
-    // riprova tra poco
-    setTimeout(init3D, 150);
-    return;
-  }
+  const host = document.getElementById("rov3d");
+  if(!host){ console.warn("[3D] missing #rov3d"); return; }
 
-  three.container = container;
+  const w0 = host.clientWidth || 0;
+const h0 = host.clientHeight || 0;
+if (w0 < 10 || h0 < 10) {
+  console.warn("[3D] host size too small", w0, h0);
+  setTimeout(init3DOnce, 120);
+  return;
+}
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b1220);
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, powerPreference:"low-power" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(w0, h0, false);
+renderer.setClearColor(0x0b1220, 1);
 
-  const camera = new THREE.PerspectiveCamera(45, cw/ch, 0.01, 2000);
+// mount
+host.innerHTML = "";
+host.appendChild(renderer.domElement);
+renderer.domElement.style.width = "100%";
+renderer.domElement.style.height = "100%";
+renderer.domElement.style.display = "block";
 
-  const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(cw, ch, false);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, w0 / h0, 0.05, 100);
+camera.position.set(0.8, 0.35, 1.2);
+camera.lookAt(0,0,0);
 
-  // color space corretto (aiuta molto materiali scuri)
-  if(renderer.outputColorSpace !== undefined){
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-  }else if(renderer.outputEncoding !== undefined){
-    renderer.outputEncoding = THREE.sRGBEncoding;
-  }
+  camera.position.set(0.8, 0.35, 1.2);
+  camera.lookAt(0, 0, 0);
 
-  container.innerHTML = "";
-  container.appendChild(renderer.domElement);
-
-  // luci più “visibili”
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x223355, 0.85);
-  scene.add(hemi);
-
+  // lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-  dir.position.set(2.5, 3.5, 2.0);
+  dir.position.set(2, 2, 2);
   scene.add(dir);
 
-  // aiuti visivi
-  const axes = new THREE.AxesHelper(0.25);
-  scene.add(axes);
+  // render loop
+  const tick = () => {
+    renderer.render(scene, camera);
+    rov3d.anim = requestAnimationFrame(tick);
+  };
+  tick();
 
-  const grid = new THREE.GridHelper(2.0, 10, 0x20304a, 0x18243a);
-  grid.position.y = -0.25;
-  scene.add(grid);
-
-  // root: qui applicheremo attitude
-  const root = new THREE.Group();
-  scene.add(root);
-
-  // funzione per inquadrare automaticamente il modello
-  function fitCameraToObject(obj){
-    const box = new THREE.Box3().setFromObject(obj);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const fov = camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / (2 * Math.tan(fov / 2)));
-
-    cameraZ *= 1.6; // margine
-    camera.position.set(center.x + cameraZ*0.55, center.y + cameraZ*0.35, center.z + cameraZ);
-    camera.near = maxDim / 200;
-    camera.far  = maxDim * 200;
+  // resize
+  const onResize = () => {
+    const r2 = host.getBoundingClientRect();
+    if(r2.width < 10 || r2.height < 10) return;
+    camera.aspect = r2.width / r2.height;
     camera.updateProjectionMatrix();
-    camera.lookAt(center);
-  }
+    renderer.setSize(r2.width, r2.height);
+  };
+  const ro = new ResizeObserver(() => {
+    const w = host.clientWidth || 0;
+    const h = host.clientHeight || 0;
+    if (w < 10 || h < 10) return;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  });
+  ro.observe(host);
 
-  const loader = new THREE.GLTFLoader();
-  const statusEl = document.getElementById("att_readout");
-  if(statusEl) statusEl.textContent = "Loading ROV model…";
 
+  // store
+  rov3d.inited = true;
+  rov3d.scene = scene;
+  rov3d.camera = camera;
+  rov3d.renderer = renderer;
+
+  // load model
+  const loader = new GLTFLoader();
   loader.load(
     "/static/models/rov.glb",
     (gltf) => {
       const model = gltf.scene;
 
-      // se il modello è super scuro, rendi doubleSide e assicurati che non sia trasparente weird
-      model.traverse((o)=>{
-        if(o.isMesh){
-          o.frustumCulled = false;
-          if(o.material){
-            o.material.transparent = false;
-            o.material.side = THREE.DoubleSide;
-          }
-        }
-      });
-
-      // centra sull'origine e scala “umana”
+      // center + scale
       const box = new THREE.Box3().setFromObject(model);
       const size = new THREE.Vector3();
-      box.getSize(size);
       const center = new THREE.Vector3();
+      box.getSize(size);
       box.getCenter(center);
 
+      model.position.sub(center);
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      const target = 0.9;                 // dimensione target in scena
-      const scale = target / maxDim;
+      const s = 1.0 / maxDim;
+      model.scale.setScalar(s);
 
-      model.scale.setScalar(scale);
-      model.position.set(-center.x*scale, -center.y*scale, -center.z*scale);
+      scene.add(model);
+      rov3d.model = model;
 
-      // offset assi (se necessario, per ora 0)
-      model.rotation.set(
-        three.modelEulerOffset.x,
-        three.modelEulerOffset.y,
-        three.modelEulerOffset.z
-      );
+      console.log("[3D] model loaded, size:", size, "scale:", s);
 
-      root.add(model);
-      three.model = model;
-
-      fitCameraToObject(root);
-
-      if(statusEl) statusEl.textContent = "ROV model loaded";
+      // fit camera to model
+      const fov = camera.fov * (Math.PI / 180);
+      let camZ = Math.abs(1 / (2 * Math.tan(fov / 2)));
+      camZ *= 1.8;
+      camera.position.set(0, 0.4, camZ);
+      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
     },
-    (xhr) => {
-      // opzionale: progress
-      // if(statusEl && xhr.total) statusEl.textContent = `Loading… ${Math.round(xhr.loaded/xhr.total*100)}%`;
-    },
-    (err) => {
-      if(statusEl) statusEl.textContent = "GLB load error (check console)";
-      console.error("GLB load error", err);
-    }
+    undefined,
+    (err) => console.error("[3D] load error", err)
   );
-
-  three.scene = scene;
-  three.camera = camera;
-  three.renderer = renderer;
-  three.root = root;
-  three.inited = true;
-
-  if(three.animRunning) return;
-    three.animRunning = true;
-
-  function animate(){
-    requestAnimationFrame(animate);
-    resize3DIfNeeded();
-    renderer.render(scene, camera);
-    three.rafId = requestAnimationFrame(animate);
-  }
-  
-  animate();
 }
 
-function resize3DIfNeeded(){
-  if(!three.inited || !three.container) return;
-  const w = three.container.clientWidth || 640;
-  const h = three.container.clientHeight || 360;
-  if(w === three.lastSize.w && h === three.lastSize.h) return;
-
-  three.lastSize = {w,h};
-  three.camera.aspect = w/h;
-  three.camera.updateProjectionMatrix();
-  three.renderer.setSize(w, h, false);
-}
-
-// Attitude: roll/pitch/yaw in radianti (se li hai in gradi converti)
 function setRovAttitudeRad(roll, pitch, yaw){
-  if(!three.inited || !three.root) return;
+  if(!rov3d.model) return;
+  // qui puoi cambiare ordine assi se serve
+  rov3d.model.rotation.set(pitch || 0, yaw || 0, roll || 0);
+}
 
-  // convenzione tipica:
-  // roll  = rotazione attorno asse X
-  // pitch = rotazione attorno asse Y
-  // yaw   = rotazione attorno asse Z
-  // NB: potrebbe servire remapping; per ora partiamo così.
-  three.root.rotation.set(roll || 0, pitch || 0, yaw || 0, "XYZ");
+function ensure3D(){
+  const host = document.getElementById("rov3d");
+  if(!host){ setTimeout(ensure3D, 100); return; }
+  init3DOnce();
 }
 
 function degToRad(d){ return (d || 0) * Math.PI / 180; }
 
-function stop3D(){
-    if(three.rafId) cancelAnimationFrame(three.rafId);
-    three.rafId = null;
-    three.animRunning = false;
-  }
-
-  async function refreshLogSessions(){
-  const j = await fetch("/api/log/sessions").then(r=>r.json());
-  const s = j.sessions || [];
-  el("log_sessions").innerHTML = s.slice(0,8).map(x=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
-      <div class="mono">${x.sid}</div>
-      <div>
-        <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
-      </div>
-    </div>
-  `).join("") || "<div class='mono'>No sessions</div>";
-}
-
 async function refreshLogStatus(){
+  // Se i controlli log non sono presenti in pagina, non fare nulla
+  if(!exists("log_status")) return;
+
   const j = await fetch("/api/log/status").then(r=>r.json());
   const enabled = !!j.enabled;
   const sid = j.sid || "-";
+
   el("log_status").textContent = `${enabled ? "ON" : "OFF"}  ${sid}`;
 
   const zip = el("log_zip");
-  if(sid && sid !== "-"){
-    zip.href = `/api/log/zip?sid=${sid}`;
-    zip.style.pointerEvents = "auto";
-    zip.style.opacity = "1";
-  }else{
-    zip.href = "#";
-    zip.style.pointerEvents = "none";
-    zip.style.opacity = ".5";
+  if(zip){
+    if(sid && sid !== "-"){
+      zip.href = `/api/log/zip?sid=${sid}`;
+      zip.style.pointerEvents = "auto";
+      zip.style.opacity = "1";
+    }else{
+      zip.href = "#";
+      zip.style.pointerEvents = "none";
+      zip.style.opacity = ".5";
+    }
   }
 }
 
 async function refreshLogSessions(){
+  if(!exists("log_sessions")) return;
+
   const j = await fetch("/api/log/sessions").then(r=>r.json());
   const s = j.sessions || [];
-  el("log_sessions").innerHTML = s.slice(0,6).map(x=>`
+  el("log_sessions").innerHTML = s.slice(0,8).map(x=>`
     <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
-      <span>${x.sid}</span>
+      <span class="mono">${x.sid}</span>
       <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
     </div>
-  `).join("") || "<div>no sessions</div>";
+  `).join("") || "<div class='mono'>No sessions</div>";
 }
 
 function setupLogs(){
+  // Se non hai i bottoni in pagina (come ora), non deve rompere la UI
+  if(!exists("log_start") || !exists("log_stop")) return;
+
   el("log_start").onclick = async ()=>{
     await fetch("/api/log/start", {method:"POST"});
     await refreshLogStatus();
     await refreshLogSessions();
   };
+
   el("log_stop").onclick = async ()=>{
     await fetch("/api/log/stop", {method:"POST"});
     await refreshLogStatus();
     await refreshLogSessions();
   };
 }
+
+// --- bootstrap ---
+window.addEventListener("DOMContentLoaded", () => {
+  init().catch(err => {
+    console.error("init failed:", err);
+    const s = document.getElementById("status");
+    if (s) s.textContent = "init error: " + (err?.message || err);
+  });
+});

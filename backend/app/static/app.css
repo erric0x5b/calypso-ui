@@ -208,19 +208,6 @@ label {
     font-weight: 700;
 }
 
-/* Vertical slider (rotate method) */
-.vslider-wrap {
-    width: 44px;
-    height: 220px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 0;
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, .08);
-    background: rgba(0, 0, 0, .18);
-}
-
 .vslider {
     width: 200px;
     transform: rotate(-90deg);
@@ -239,7 +226,7 @@ label {
 }
 
 /* SVG container nicer spacing */
-#power_scada_svg svg {
+.scadaBox svg{
     border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, .06);
     background: rgba(0, 0, 0, .12);
@@ -270,7 +257,7 @@ label {
 
 .layout {
     display: grid;
-    grid-template-columns: 1fr 380px;
+    grid-template-columns: 1fr clamp(280px, 32vw, 380px);
     gap: 12px;
     padding: 0 18px 18px;
     align-items: start;
@@ -342,7 +329,7 @@ label {
 }
 
 .hidden {
-    display: none;
+    display: none !important;
 }
 
 .dropdown label {
@@ -366,10 +353,6 @@ label {
     padding: 10px;
 }
 
-.hidden {
-    display: none;
-}
-
 .lightsGrid {
     display: grid;
     grid-template-columns: repeat(4, minmax(70px, 1fr));
@@ -390,4 +373,145 @@ label {
     #rov3d {
         height: 300px;
     }
+}
+
+.lgtChan { border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px; background: rgba(255,255,255,.03); }
+.lgtTitle { font-weight:700; margin-bottom:8px; }
+/*
+.lgtSlider{
+  width: 100%;
+  height: 140px;
+  writing-mode: bt-lr;
+  -webkit-appearance: slider-vertical;
+}*/
+
+.lgtBtns{ display:flex; gap:6px; justify-content:space-between; margin-top:10px; }
+.lgtBtns button{ flex:1; }
+
+
+/* Lights widget */
+.lgtWrap{ display:flex; flex-direction:column; gap:10px; }
+
+.lgtCfgRow{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px;
+}
+
+.lgtCfgBody{ margin-top:8px; }
+
+.lgtGrid{
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap:10px;
+  align-items:stretch;
+}
+
+.lgtCh{
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: 10px;
+  min-width: 0;
+}
+
+.lgtChHead{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:8px;
+  margin-bottom: 8px;
+}
+
+.lgtChName{ font-weight:700; font-size:13px; color: var(--fg); opacity:.92; }
+
+.lgtVCol{
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+}
+
+.lgtVSlider{
+  height: 170px;           /* <- regola qui l'altezza */
+  width: 30px;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.lgtVal{ font-size:12px; opacity:.8; }
+
+/* area 3D: deve avere altezza, altrimenti canvas = 0 */
+.rov3d{
+  width: 100%;
+  min-height: 320px;          /* per dock/tablet */
+  height: 38vh;               /* oppure fisso */
+  max-height: 520px;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  background: #0b1220;        /* stesso colore del renderer */
+}
+
+#rov3d { position: relative; }
+#rov3d canvas { display:block; width:100% !important; height:100% !important; }
+
+/* Layout: main + dock */
+.layout{
+  display: grid;
+  grid-template-columns: 1fr clamp(280px, 32vw, 380px);
+  gap: 12px;
+  padding: 0 18px 18px;
+  align-items: start;
+}
+
+/* La card Main deve poter occupare spazio e contenere uno slot che riempie */
+.main .card{
+  display: flex;
+  flex-direction: column;
+  min-height: 70vh;            /* demo: alza un po’ l’area principale */
+}
+
+#main_slot{
+  flex: 1 1 auto;
+  min-height: 0;               /* IMPORTANT: permette overflow corretto in flex */
+}
+
+/* Mission layout dentro main_slot */
+.missionWrap{
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr auto; /* sopra: espandibile, sotto: scada */
+  gap: 12px;
+  min-height: 0;
+}
+
+.missionTop{
+  display: grid;
+  grid-template-columns: clamp(220px, 20vw, 320px) 1fr clamp(220px, 20vw, 320px);
+  gap: 12px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.missionBottom{
+  /* resta sotto, full width */
+}
+
+/* Area 3D */
+.rov3d{
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  max-height: 520px;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  background: #0b1220;
+}
+
+#rov3d canvas{
+  display:block;
+  width:100% !important;
+  height:100% !important;
+}
+
+/* Mobile/tablet stretto: stack */
+@media (max-width: 980px){
+  .missionTop{ grid-template-columns: 1fr; }
+  .main .card{ min-height: 60vh; }
 }

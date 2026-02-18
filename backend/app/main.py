@@ -1,21 +1,18 @@
 import asyncio
 import os
 import socket
+import json
+import re
+import io
+import zipfile
 from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
-
-import json
+from fastapi import WebSocket
 from fastapi import Body
 from fastapi.responses import JSONResponse
-
-import re
-import io
-import zipfile
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -64,6 +61,19 @@ events_path = os.path.join(LOG_DIR, f"events_{datetime.now().strftime('%Y%m%d_%H
 for pth in (telemetry_path, alarms_path, events_path):
     open(pth, "a", encoding="utf-8").close()
     
+def make_sid() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+def set_session_paths(sid: str):
+    global telemetry_path, alarms_path, events_path
+    telemetry_path = os.path.join(LOG_DIR, f"telemetry_{sid}.csv")
+    alarms_path    = os.path.join(LOG_DIR, f"alarms_{sid}.csv")
+    events_path    = os.path.join(LOG_DIR, f"events_{sid}.jsonl")
+    for pth in (telemetry_path, alarms_path, events_path):
+        os.makedirs(os.path.dirname(pth), exist_ok=True)
+        open(pth, "a", encoding="utf-8").close()
+
+    
 udp_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # -------- State (very simple for now) --------
@@ -93,6 +103,7 @@ state["logging"] = {
     "events_path": events_path,
 }
 
+state.setdefault("logging", {"enabled": False, "sid": None})
 
 ws_clients: set[WebSocket] = set()
 
@@ -277,13 +288,12 @@ def parse_nmea_line(line: str):
     }, None
 
 def append_telemetry_csv(p):
-    log = state.get("logging", {})
-    if not log.get("enabled", True):
+    if not state.get("logging", {}).get("enabled"):
         return
-    path = log.get("telemetry_path", telemetry_path)
     raw_escaped = p["raw"].replace('"', '""')
-    with open(path, "a", encoding="utf-8") as f:
+    with open(telemetry_path, "a", encoding="utf-8") as f:
         f.write(f'{p["ts_ms"]},{p["src"]},{p["msg"]},"{raw_escaped}"\n')
+
 
 async def ws_broadcast(obj: dict):
     dead = []
@@ -312,14 +322,17 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     ws_clients.add(ws)
     try:
-        # Send last known line on connect
-        if latest["last_line"]:
+        if latest.get("last_line"):
             await ws.send_json({"type": "last", "raw": latest["last_line"]})
-        while True:
-            await asyncio.sleep(30)
 
-    except Exception:
-        pass
+        while True:
+            # non bloccare: se il client manda qualcosa lo consumiamo
+            try:
+                await ws.receive_text()
+            except Exception:
+                # molti client non inviano nulla: teniamo vivo con sleep
+                await asyncio.sleep(30)
+
     finally:
         ws_clients.discard(ws)
         
@@ -439,10 +452,6 @@ async def cmd_lights_channel(body: dict):
     return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids}
 
 
-@app.get("/api/config/lights")
-def api_get_lights_cfg():
-    return load_lights_cfg()
-
 @app.post("/api/config/lights")
 def api_set_lights_cfg(cfg: dict = Body(...)):
     if "channels" not in cfg or not isinstance(cfg["channels"], dict):
@@ -468,44 +477,6 @@ def api_set_lights_cfg(cfg: dict = Body(...)):
 
     save_lights_cfg(out)
     return {"ok": True}
-
-@app.post("/api/cmd/lights_channel")
-def api_cmd_lights_channel(payload: dict = Body(...)):
-    # payload: {ch:1..4, mode:"ON"/"OFF"/"TEST", dim:int}
-    ch = int(payload.get("ch", 0))
-    mode = str(payload.get("mode", "ON")).upper()
-    dim = int(payload.get("dim", 0))
-
-    if ch not in (1,2,3,4):
-        return JSONResponse({"ok": False, "err": "bad ch"}, status_code=400)
-    if mode not in ("ON","OFF","TEST"):
-        return JSONResponse({"ok": False, "err": "bad mode"}, status_code=400)
-    if dim < 0 or dim > 1000:
-        return JSONResponse({"ok": False, "err": "bad dim"}, status_code=400)
-
-    cfg = load_lights_cfg()
-    lamp_ids = cfg["channels"][str(ch)].get("lamp_ids", [])
-    # lista ids codificata semplice: "1|2|5"
-    lamp_ids_str = "|".join(str(x) for x in lamp_ids)
-
-    # TODO: qui chiami la tua funzione send_cmd_udp(...) che già usi per CMD/ACK
-    # Esempio payload K/V:
-    # Type,LIGHTS,Ch,1,Mode,ON,Dim,700,LampIds,1|2|5
-    cmd_kv = {
-        "Type": "LIGHTS",
-        "Ch": ch,
-        "Mode": mode,
-        "Dim": dim,
-        "LampIds": lamp_ids_str
-    }
-
-    # placeholder: genera cmd_id come già fai altrove
-    cmd_id = int(datetime.now().timestamp() * 1000) & 0xFFFFFFFF
-
-    # send_cmd_udp(dst="ROV"/"SFC"?): dipende dal tuo schema; qui metto placeholder
-    # send_cmd_udp(cmd_id=cmd_id, kv=cmd_kv)
-
-    return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids}
 
 SESSION_RE = re.compile(r"^(telemetry|alarms|events)_(\d{8}_\d{6})\.(csv|jsonl)$")
 
@@ -563,7 +534,7 @@ def api_log_zip(sid: str):
             "created_utc": datetime.utcnow().isoformat() + "Z",
             "files": {k: os.path.basename(v) for k, v in files.items()}
         }
-        z.writestr(f"manifest_{sid}.json", str(manifest).replace("'", '"'))
+        z.writestr(f"manifest_{sid}.json", json.dumps(manifest, indent=2))
 
     buf.seek(0)
     filename = f"deepex_logs_{sid}.zip"
@@ -576,3 +547,20 @@ def api_log_zip(sid: str):
 @app.get("/api/log/status")
 def api_log_status():
     return state.get("logging", {"enabled": False, "sid": None})
+
+@app.post("/api/log/start")
+def api_log_start():
+    sid = make_sid()
+    set_session_paths(sid)
+    state["logging"] = {"enabled": True, "sid": sid}
+    return {"ok": True, "sid": sid}
+
+@app.post("/api/log/stop")
+def api_log_stop():
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    state["logging"] = {"enabled": False, "sid": cur.get("sid")}
+    return {"ok": True, "sid": state["logging"]["sid"]}
+
+@app.get("/api/config/lights")
+def api_get_lights_cfg():
+    return load_lights_cfg()

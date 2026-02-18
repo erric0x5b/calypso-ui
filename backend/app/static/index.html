@@ -12,6 +12,7 @@
   <h2>calypso-ui <span id="status" class="pill">connecting…</span></h2>
 
   <div class="topbar">
+    <span class="pill" id="main_mode">MISSION</span>
     <div class="tabs">
       <button class="tab active" data-tab="mission">MISSION</button>
       <button class="tab" data-tab="video">VIDEO</button>
@@ -23,100 +24,147 @@
       <div id="widgets_panel" class="dropdown hidden"></div>
     </div>
   </div>
-
   <div class="layout">
-    <div class="main">
-      <div class="card">
+  <div id="missionWrap" class="missionWrap">
+    <div class="missionTop">
+      <div class="card missionSide">
         <div class="cardHead">
-          <div class="cardTitle">Main</div>
-          <div class="cardActions">
-            <span class="pill" id="main_mode">MISSION</span>
-          </div>
+          <div class="cardTitle">Motori SX</div>
         </div>
-        <div class="cardBody" id="main_slot"></div>
+        <div class="cardBody">
+          <div id="motors_left" class="motorsRings"></div>
+        </div>
+      </div>
+
+      <div class="card missionCenter">
+        <div class="cardHead">
+          <div class="cardTitle">ROV 3D</div>
+        </div>
+        <div class="cardBody">
+          <div id="rov3d" class="rov3d"></div>
+          <div class="mono" id="att_readout" style="margin-top:8px;opacity:.85;">—</div>
+        </div>
+      </div>
+
+      <div class="card missionSide">
+        <div class="cardHead">
+          <div class="cardTitle">Motori DX</div>
+        </div>
+        <div class="cardBody">
+          <div id="motors_right" class="motorsRings"></div>
+        </div>
       </div>
     </div>
 
-    <div class="dock">
-
-      <div class="card widget" data-widget="alarms">
-        <div class="cardHead">
-          <div class="cardTitle">Allarmi</div>
-          <div class="cardActions">
-            <button class="iconBtn" data-collapse="alarms">▾</button>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div><b>Active</b></div>
-          <div id="alarms_active"></div>
-          <div style="margin-top:10px"><b>Last 10</b></div>
-          <div id="alarms_hist"></div>
-        </div>
+    <div class="card missionBottom">
+      <div class="cardHead">
+        <div class="cardTitle">Power SCADA</div>
       </div>
-
-      <div class="card widget" data-widget="power">
-        <div class="cardHead">
-          <div class="cardTitle">Power</div>
-          <div class="cardActions">
-            <button class="iconBtn" data-collapse="power">▾</button>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div id="power_scada_badges"></div>
-          <div class="mono" style="margin-top:8px;opacity:.75;">Open MISSION for SCADA view</div>
-        </div>
-
+      <div class="cardBody">
+        <div id="main_power_badges"></div>
+        <div id="main_scada" style="margin-top:10px;"></div>
       </div>
-
-      <div class="card widget" data-widget="lights">
-        <div class="cardHead">
-          <div class="cardTitle">Luci</div>
-          <div class="cardActions">
-            <button class="iconBtn" data-collapse="lights">▾</button>
-            <span class="pill" id="lgt_ack">—</span>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div style="margin-bottom:8px;"><b>Config</b> <span class="pill" id="lgt_cfg_status">—</span></div>
-          <div id="lgt_cfg"></div>
-          <button id="lgt_cfg_save" style="margin-top:10px;">Save config</button>
-          <div style="margin-top:12px;"><b>Controllo</b></div>
-          <div id="lgt_ctrl" style="margin-top:8px;"></div>
-        </div>
+    </div>
+  </div>
+  <div id="videoWrap" class="hidden">
+    <div class="card">
+      <div class="cardHead">
+        <div class="cardTitle">VIDEO</div>
       </div>
-
-      <div class="card widget" data-widget="motors">
-        <div class="cardHead">
-          <div class="cardTitle">Motori</div>
-          <div class="cardActions">
-            <button class="iconBtn" data-collapse="motors">▾</button>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div id="esc"></div>
-        </div>
+      <div class="cardBody">
+        <div class="mono">VIDEO SLOT</div>
       </div>
-
-      <div class="card widget" data-widget="missionlog">
-        <div class="cardHead">
-          <div class="cardTitle">Mission Log</div>
-          <div class="cardActions">
-            <button class="iconBtn" data-collapse="missionlog">▾</button>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div class="mono" id="mission_log">—</div>
-        </div>
+    </div>
+  </div>
+  <div id="sonarWrap" class="hidden">
+    <div class="card">
+      <div class="cardHead">
+        <div class="cardTitle">SONAR</div>
       </div>
-
+      <div class="cardBody">
+        <div class="mono">SONAR SLOT</div>
+      </div>
     </div>
   </div>
 
-  <div class="layout">
-    <div id="dock" class="dock"></div>
+  <div id="dock" class="dock">
+    <div class="card widget" data-widget="alarms">
+      <div class="cardHead">
+        <div class="cardTitle">Allarmi</div>
+        <div class="cardActions">
+          <button class="iconBtn" data-collapse="alarms">▾</button>
+        </div>
+      </div>
+      <div class="cardBody">
+        <div><b>Active</b></div>
+        <div id="alarms_active"></div>
+        <div style="margin-top:10px"><b>Last 10</b></div>
+        <div id="alarms_hist"></div>
+      </div>
+    </div>
 
-    <div class="card">
-      <div class="cardHead"><div class="cardTitle">Mission Log</div></div>
+    <div class="card widget" data-widget="power">
+      <div class="cardHead">
+        <div class="cardTitle">Power</div>
+        <div class="cardActions">
+          <button class="iconBtn" data-collapse="power">▾</button>
+        </div>
+      </div>
+      <div class="cardBody">
+        <div id="power_scada_badges"></div>
+        <div class="mono" style="margin-top:8px;opacity:.75;">Open MISSION for SCADA view</div>
+      </div>
+
+    </div>
+
+    <div class="card widget" data-widget="lights">
+      <div class="cardHead">
+        <div class="cardTitle">Luci</div>
+        <div class="cardActions">
+          <button class="iconBtn" data-collapse="lights">▾</button>
+          <span class="pill" id="lgt_ack">—</span>
+        </div>
+      </div>
+
+      <div class="cardBody">
+        <div class="lgtWrap">
+
+          <div class="lgtCfgRow">
+            <div><b>Config</b> <span class="pill" id="lgt_cfg_status">—</span></div>
+            <button class="iconBtn" id="lgt_cfg_toggle">▾</button>
+          </div>
+
+          <div class="lgtCfgBody" id="lgt_cfg_body">
+            <div id="lgt_cfg"></div>
+            <button id="lgt_cfg_save" style="margin-top:10px;">Save config</button>
+          </div>
+
+          <div style="margin-top:6px;"><b>Controllo</b></div>
+          <div id="lgt_ctrl" style="margin-top:8px;"></div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="card widget" data-widget="motors">
+      <div class="cardHead">
+        <div class="cardTitle">Motori</div>
+        <div class="cardActions">
+          <button class="iconBtn" data-collapse="motors">▾</button>
+        </div>
+      </div>
+      <div class="cardBody">
+        <div id="esc"></div>
+      </div>
+    </div>
+
+    <div class="card widget" data-widget="missionlog">
+      <div class="cardHead">
+        <div class="cardTitle">Mission Log</div>
+        <div class="cardActions">
+          <button class="iconBtn" data-collapse="missionlog">▾</button>
+        </div>
+      </div>
       <div class="cardBody">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button id="log_start">START</button>
@@ -127,36 +175,17 @@
         <div style="margin-top:10px;" id="log_sessions" class="mono">—</div>
       </div>
     </div>
-
-    <div class="card">
-      <h3>Nodes</h3>
-      <div id="nodes"></div>
-    </div>
-
-    <div class="card">
-      <h3>Batteries / Pods</h3>
-      <div id="pods"></div>
-    </div>
-
-    <div class="card">
-      <h3>Power SCADA</h3>
-      <div id="power_scada_badges"></div>
-      <div id="power_scada_svg" style="margin-top:10px;"></div>
-    </div>
-
-    <div class="card">
-      <h3>Last UDP line</h3>
-      <div id="last_raw" class="mono"></div>
-    </div>
-
-    <div class="card">
-      <h3>Counters</h3>
-      <div id="counters"></div>
-    </div>
   </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="/static/three_boot.js?v=3"></script>
   <script src="/static/app.js?v=2" defer></script>
 
 </body>
