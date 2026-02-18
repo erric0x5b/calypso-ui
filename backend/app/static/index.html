@@ -71,9 +71,30 @@
         <div class="card">
           <div class="cardHead">
             <div class="cardTitle">VIDEO</div>
+            <div class="cardActions">
+              <span class="pill" id="video_status">—</span>
+            </div>
           </div>
           <div class="cardBody">
-            <div class="mono">VIDEO SLOT</div>
+            <div class="videoToolbar">
+              <select id="video_source">
+                <option value="mjpeg">MJPEG</option>
+                <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+              </select>
+
+              <input id="video_url" type="text" placeholder="URL stream (es: /static/demo.mp4 o http://...)" />
+
+              <button id="video_apply">APPLY</button>
+              <button id="video_stop">STOP</button>
+            </div>
+
+            <div class="videoStage">
+              <div id="video_slot" class="videoSlot"></div>
+            </div>
+
+            <div class="mono" style="margin-top:10px;opacity:.75">
+              *HLS: su molti browser desktop serve hls.js (lo aggiungiamo dopo se serve).
+            </div>
           </div>
         </div>
       </div>

@@ -497,7 +497,7 @@ label {
   width: 100%;
   height: 100%;
   min-height: 320px;
-  max-height: 520px;
+  max-height: 220px;
   border-radius: 12px;
   overflow: hidden;
   position: relative;
@@ -610,3 +610,302 @@ label {
 .badge.ok{ border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.10); color: var(--text); }
 .badge.bad{ border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.10); color: var(--text); }
 .badge.muted{ color: var(--muted); }
+
+.motorsRings{
+  display:grid;
+  grid-template-rows: repeat(3, 1fr);
+  gap: 14px;
+  align-items:center;
+  justify-items:center;
+  min-height: 420px;
+}
+
+.thRing{
+  width: 120px;
+  height: 120px;
+}
+
+.thRing text{
+  font-family: var(--sans);
+}
+
+.thLabel{
+  font-size: 12px;
+  font-weight: 900;
+  fill: var(--text);
+  opacity: .95;
+}
+
+.thValue{
+  font-size: 18px;
+  font-weight: 900;
+  fill: var(--text);
+}
+
+.thSub{
+  font-size: 11px;
+  fill: var(--muted);
+  opacity: .9;
+}
+
+/* --- Lights control grid: fix vertical sliders layout --- */
+
+.lgtGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.lgtCh{
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: 10px;
+  min-width: 0;
+
+  /* layout interno stabile */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+
+.lgtChHead{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  margin: 0;
+}
+
+.lgtChName{
+  font-weight: 900;
+  letter-spacing: .2px;
+}
+
+/* lo slider vero e proprio */
+.lgtSlider{
+  width: 190px;      /* lunghezza corsa */
+  height: 18px;
+}
+
+/* valore sotto al titolo, dentro slider zone */
+.lgtVal{
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align:center;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.lgtBtns{
+  display:flex;
+  gap: 8px;
+}
+
+.lgtBtns button{
+  flex: 1;
+}
+
+/* ===== Lights control (fix vertical sliders) ===== */
+
+.lgtGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.lgtCh{
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  padding: 10px;
+  min-width: 0;
+
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+}
+
+.lgtChHead{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.lgtChName{
+  font-weight: 900;
+  letter-spacing: .2px;
+}
+
+/* spazio dedicato allo slider */
+.lgtSliderZone{
+  position: relative;
+  height: 190px;          /* regola qui */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow: hidden;       /* impedisce sovrapposizioni */
+}
+
+/* wrapper ruotato */
+.lgtSliderWrap{
+  width: 190px;           /* uguale a height zona, così è centrato */
+  height: 44px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.lgtSlider{
+  width: 190px;
+  height: 18px;
+}
+
+.lgtVal{
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.lgtBtns{
+  display:flex;
+  gap: 8px;
+}
+
+.lgtBtns button{
+  flex: 1;
+}
+
+/* ===== Lights control (centering + buttons placement) ===== */
+
+.lgtCh{
+  /* lascia la tua base, ma forziamo una struttura più stabile */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  padding: 12px;
+
+  /* IMPORTANT: spazio “vero” per i bottoni */
+  padding-bottom: 14px;
+}
+
+.lgtSliderZone{
+  /* centra davvero */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  /* altezza un pelo più generosa */
+  height: 230px;
+
+  /* evita che elementi tocchino i bordi */
+  padding: 8px 0;
+
+  position: relative;
+  overflow: hidden;
+}
+
+.lgtSliderWrap{
+  /* il wrapper ruotato deve stare al centro */
+  width: 200px;
+  height: 44px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  transform: rotate(-90deg);
+  transform-origin: center;
+
+  /* evita “shift” verticali */
+  margin: 0;
+}
+
+.lgtSlider{
+  width: 200px;
+  height: 18px;
+}
+
+.lgtVal{
+  /* valore sotto lo slider, centrato */
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 900;
+  pointer-events: none;
+}
+
+.lgtBtns{
+  /* bottoni sempre sotto e centrati */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+
+  /* staccali dal bordo */
+  margin-top: 6px;
+}
+
+.lgtBtns button{
+  width: 100%;
+  padding: 10px 0;
+  border-radius: 14px;
+}
+
+/* ===== Video ===== */
+.videoToolbar{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+}
+
+.videoToolbar input{
+  flex: 1;
+  min-width: 220px;
+}
+
+.videoStage{
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.25);
+  border-radius: 14px;
+  overflow:hidden;
+}
+
+/* contenitore 16:9 responsivo */
+.videoSlot{
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 280px;     /* tablet */
+  background: #000;
+  position: relative;
+}
+
+/* elementi dentro slot */
+.videoSlot video,
+.videoSlot img{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit: contain;   /* o cover */
+  display:block;
+}

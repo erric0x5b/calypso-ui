@@ -424,33 +424,51 @@ async function sendLightsChannel(ch, mode, dim) {
 }
 
 function renderLightsCtrl() {
-  let html = `<div class="lightsGrid">`;
+  let html = `<div class="lgtGrid">`;
+
   for (const k of ["1", "2", "3", "4"]) {
     const name = lightsCfg?.channels?.[k]?.name || `CH${k}`;
+
     html += `
-      <div class="chcol">
-        <div style="font-weight:800">${name}</div>
-        <div class="vslider-wrap">
-          <input id="lgt_dim_${k}" class="vslider" type="range" min="0" max="1000" value="0">
+      <div class="lgtCh">
+        <div class="lgtChHead">
+          <div class="lgtChName">${name}</div>
         </div>
-        <div><span id="lgt_val_${k}">0</span></div>
-        <div style="display:flex;gap:6px;">
+
+        <div class="lgtSliderZone">
+          <div class="lgtSliderWrap">
+            <input id="lgt_dim_${k}" class="lgtSlider" type="range" min="0" max="1000" value="0">
+          </div>
+          <div class="lgtVal"><span id="lgt_val_${k}">0</span></div>
+        </div>
+
+        <div class="lgtBtns">
           <button id="lgt_on_${k}">ON</button>
           <button id="lgt_off_${k}">OFF</button>
         </div>
       </div>`;
   }
+
   html += `</div>`;
   el("lgt_ctrl").innerHTML = html;
 
-  // wiring (come già fai)
+  // wiring (uguale a prima, ma con guard-rail)
   for (const k of ["1", "2", "3", "4"]) {
     const slider = el(`lgt_dim_${k}`);
     const label = el(`lgt_val_${k}`);
+    const btnOn = el(`lgt_on_${k}`);
+    const btnOff = el(`lgt_off_${k}`);
+
+    if (!slider || !label || !btnOn || !btnOff) continue;
+
     slider.addEventListener("input", () => label.textContent = slider.value);
-    el(`lgt_on_${k}`).onclick = () => sendLightsChannel(parseInt(k, 10), "ON", parseInt(slider.value, 10));
-    el(`lgt_off_${k}`).onclick = () => sendLightsChannel(parseInt(k, 10), "OFF", 0);
-    slider.addEventListener("change", () => sendLightsChannel(parseInt(k, 10), "ON", parseInt(slider.value, 10)));
+
+    btnOn.onclick  = () => sendLightsChannel(parseInt(k, 10), "ON",  parseInt(slider.value, 10));
+    btnOff.onclick = () => sendLightsChannel(parseInt(k, 10), "OFF", 0);
+
+    slider.addEventListener("change", () =>
+      sendLightsChannel(parseInt(k, 10), "ON", parseInt(slider.value, 10))
+    );
   }
 }
 
@@ -579,6 +597,7 @@ window.addEventListener("load", () => {
 async function init() {
   snapshot = await fetch("/api/state").then(r => r.json());
   setupTabs();
+  setupVideo();
   renderWidgetsMenu();
   setupWidgetsMenu(); 
   applyWidgetVisibility();
@@ -701,18 +720,30 @@ function setupCollapseButtons(){
 }
 
 function renderMainSlot(tab){
-  setText("main_mode", tab.toUpperCase()); // se non esiste, non fa nulla
+  setText("main_mode", tab.toUpperCase());
 
-  const m = document.getElementById("missionWrap");
-  const v = document.getElementById("videoWrap");
-  const s = document.getElementById("sonarWrap");
-
-  if(m) m.classList.toggle("hidden", tab !== "mission");
-  if(v) v.classList.toggle("hidden", tab !== "video");
-  if(s) s.classList.toggle("hidden", tab !== "sonar");
+  // show/hide wraps (se già lo fai, ok)
+  const mw = el("missionWrap");
+  const vw = el("videoWrap");
+  const sw = el("sonarWrap");
+  if(mw) mw.classList.toggle("hidden", tab !== "mission");
+  if(vw) vw.classList.toggle("hidden", tab !== "video");
+  if(sw) sw.classList.toggle("hidden", tab !== "sonar");
 
   if(tab === "mission"){
-    ensure3D(); // se ti serve (ma attenzione a non reinizializzare)
+    ensure3D(); // come già fai
+    return;
+  }
+
+  if(tab === "video"){
+    // mount se non montato
+    mountVideo(videoState.kind, videoState.url);
+    return;
+  }
+
+  if(tab === "sonar"){
+    // TODO sonar
+    return;
   }
 }
 
@@ -1078,4 +1109,169 @@ function renderMotorsRings(state){
 
   leftEl.innerHTML = left.map(renderThrusterRing).join("");
   rightEl.innerHTML = right.map(renderThrusterRing).join("");
+}
+
+function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+
+function ringColor(cmd){
+  // cmd: -100..+100
+  if(cmd > 2)  return "#22c55e";  // forward (verde)
+  if(cmd < -2) return "#ef4444";  // reverse (rosso)
+  return "#6b7280";               // idle (grigio)
+}
+
+// Crea un ring SVG. cmdPct può essere null -> mostra solo RPM
+function thrusterRingSvg(label, cmdPct, rpm){
+  const r = 44;
+  const cx = 60, cy = 60;
+  const C = 2 * Math.PI * r;
+
+  let pct = (cmdPct == null) ? 0 : clamp(Math.abs(cmdPct), 0, 100);
+  const dash = (pct/100) * C;
+  const col = (cmdPct == null) ? "#6b7280" : ringColor(cmdPct);
+
+  const cmdTxt = (cmdPct == null) ? "—" : `${Math.round(cmdPct)}%`;
+  const rpmTxt = (rpm == null) ? "rpm —" : `rpm ${rpm}`;
+
+  return `
+  <svg class="thRing" viewBox="0 0 120 120">
+    <defs>
+      <filter id="ringGlow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3" result="b"/>
+        <feMerge>
+          <feMergeNode in="b"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+
+    <!-- base ring -->
+    <circle cx="${cx}" cy="${cy}" r="${r}"
+      fill="rgba(255,255,255,0.02)"
+      stroke="rgba(255,255,255,0.10)"
+      stroke-width="10"/>
+
+    <!-- value ring -->
+    <circle cx="${cx}" cy="${cy}" r="${r}"
+      fill="none"
+      stroke="${col}"
+      stroke-width="10"
+      stroke-linecap="round"
+      stroke-dasharray="${dash} ${C - dash}"
+      transform="rotate(-90 ${cx} ${cy})"
+      filter="url(#ringGlow)"/>
+
+    <text x="${cx}" y="46" text-anchor="middle" class="thLabel">${label}</text>
+    <text x="${cx}" y="72" text-anchor="middle" class="thValue">${cmdTxt}</text>
+    <text x="${cx}" y="92" text-anchor="middle" class="thSub">${rpmTxt}</text>
+  </svg>`;
+}
+
+// Mappa THx -> ESC id (come primo mapping “semplice”)
+const THR_MAP = [
+  { th:"TH1", esc:1 }, // alto sx
+  { th:"TH2", esc:2 }, // verticale sx
+  { th:"TH3", esc:3 }, // basso sx
+  { th:"TH4", esc:4 }, // alto dx
+  { th:"TH5", esc:5 }, // verticale dx
+  { th:"TH6", esc:6 }, // basso dx
+];
+
+function renderMotorsRings(state){
+  // opzionale: se in futuro aggiungi telemetria dedicata thruster:
+  // state.thr = { TH1:{CmdPct:+30,RPM:1200}, ... }
+  const thr = state.thr || {};
+
+  const getCmd = (th) => (thr[th]?.CmdPct ?? null);  // null = non disponibile
+  const getRpm = (escId, th) => (thr[th]?.RPM ?? state.esc?.[escId]?.RPM ?? null);
+
+  // sinistra: TH1 TH2 TH3
+  const left = THR_MAP.slice(0,3).map(x =>
+    thrusterRingSvg(x.th, getCmd(x.th), getRpm(x.esc, x.th))
+  ).join("");
+
+  // destra: TH4 TH5 TH6
+  const right = THR_MAP.slice(3,6).map(x =>
+    thrusterRingSvg(x.th, getCmd(x.th), getRpm(x.esc, x.th))
+  ).join("");
+
+  setHTML("motors_left", left);
+  setHTML("motors_right", right);
+}
+
+let videoState = {
+  kind: "mjpeg",   // "mjpeg" | "video"
+  url: "",
+};
+
+function setupVideo(){
+  const src = el("video_source");
+  const url = el("video_url");
+  const apply = el("video_apply");
+  const stop = el("video_stop");
+
+  if(!src || !url || !apply || !stop) return;
+
+  // default demo (metti quello che preferisci)
+  if(!videoState.url){
+    videoState.url = "/static/demo.mp4";   // oppure un tuo endpoint MJPEG
+    url.value = videoState.url;
+  }
+
+  src.value = videoState.kind;
+
+  apply.onclick = () => {
+    videoState.kind = src.value;
+    videoState.url = (url.value || "").trim();
+    mountVideo(videoState.kind, videoState.url);
+  };
+
+  stop.onclick = () => {
+    unmountVideo();
+    setText("video_status", "stopped");
+  };
+
+  // opzionale: auto apply al primo ingresso nella tab video
+}
+
+function unmountVideo(){
+  const slot = el("video_slot");
+  if(slot) slot.innerHTML = "";
+}
+
+function mountVideo(kind, url){
+  const slot = el("video_slot");
+  if(!slot) return;
+
+  unmountVideo();
+
+  if(!url){
+    setText("video_status", "missing url");
+    return;
+  }
+
+  if(kind === "mjpeg"){
+    // MJPEG: <img src="..."> (se serve cache-bust, aggiungiamo ?t=)
+    const img = document.createElement("img");
+    img.src = url;
+    img.onload = () => setText("video_status", "MJPEG OK");
+    img.onerror = () => setText("video_status", "MJPEG error");
+    slot.appendChild(img);
+    return;
+  }
+
+  // VIDEO: mp4 / webm / webrtc url (webrtc via <video> dipende dall’URL)
+  const v = document.createElement("video");
+  v.autoplay = true;
+  v.muted = true;         // autoplay policy
+  v.playsInline = true;
+  v.controls = true;
+
+  v.src = url;
+
+  v.oncanplay = () => setText("video_status", "video OK");
+  v.onerror = () => setText("video_status", "video error");
+
+  slot.appendChild(v);
+  v.play().catch(()=>{});
 }
