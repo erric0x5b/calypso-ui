@@ -22,7 +22,6 @@ function setHTML(id, html){
   e.innerHTML = html ?? "";
 }
 
-
 function sevLabel(sev) {
   if (sev == 3) return "CRIT";
   if (sev == 2) return "ERR";
@@ -567,8 +566,9 @@ function render(state) {
     const y = (yaw   * 180 / Math.PI).toFixed(1);
     ar.textContent = `roll ${r}°  pitch ${p}°  yaw ${y}°`;
   }
+  // Motors rings (mission view)
+  renderMotorsRings(state);
 }
-
 
 let snapshot = null;
 
@@ -977,3 +977,105 @@ window.addEventListener("DOMContentLoaded", () => {
     if (s) s.textContent = "init error: " + (err?.message || err);
   });
 });
+
+// Config thrusters: 6 motori (3 sx / 3 dx). Per ora mappo su ESC 1..6.
+// Più avanti: sostituisci pct/dir con i comandi reali (thruster_cmd).
+const THRUSTERS = [
+  { side:"L", slot:1, escId:1, name:"L1" },
+  { side:"L", slot:2, escId:2, name:"L2" },
+  { side:"L", slot:3, escId:3, name:"L3" },
+  { side:"R", slot:1, escId:4, name:"R1" },
+  { side:"R", slot:2, escId:5, name:"R2" },
+  { side:"R", slot:3, escId:6, name:"R3" },
+];
+
+// crea ring SVG con stroke “progress”
+// pct 0..100
+function ringSvg(pct, status){
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(100, pct || 0));
+  const dash = (p/100) * c;
+
+  // colori: ok=verde, bad=rosso, off=grigio
+  const col =
+    status === "BAD" ? "var(--bad)" :
+    status === "OFF" ? "rgba(255,255,255,.25)" :
+    "var(--ok)";
+
+  return `
+  <svg viewBox="0 0 84 84" width="84" height="84">
+    <circle cx="42" cy="42" r="${r}" fill="none" stroke="rgba(255,255,255,.10)" stroke-width="8"/>
+    <circle cx="42" cy="42" r="${r}" fill="none"
+      stroke="${col}" stroke-width="8"
+      stroke-linecap="round"
+      stroke-dasharray="${dash} ${c-dash}"
+      transform="rotate(-90 42 42)"/>
+  </svg>`;
+}
+
+function thrusterFromState(state, t){
+  const esc = state.esc?.[String(t.escId)] || state.esc?.[t.escId] || {};
+  const rpm = esc.RPM ?? 0;
+
+  // DEMO: pct da RPM (clamp). Metti un max coerente col tuo sistema.
+  const rpmMax = 4000;
+  const pct = Math.max(0, Math.min(100, Math.round((Math.abs(rpm)/rpmMax)*100)));
+
+  // DEMO: dir da segno RPM (se non hai segno, resta FWD)
+  const dir = (rpm < 0) ? "REV" : "FWD";
+
+  // ON se pct>0
+  const on = pct > 1;
+
+  // Fault placeholder: se vuoi, usa esc.Fault o altri flag quando li aggiungi
+  const bad = false;
+
+  return {
+    name: t.name,
+    escId: t.escId,
+    pct,
+    dir,
+    rpm,
+    status: bad ? "BAD" : (on ? "ON" : "OFF"),
+  };
+}
+
+function renderThrusterRing(th){
+  const badgeClass =
+    th.status === "BAD" ? "badge bad" :
+    th.status === "OFF" ? "badge muted" :
+    "badge ok";
+
+  return `
+  <div class="ringCard">
+    <div class="ring">
+      ${ringSvg(th.pct, th.status)}
+      <div class="ringInner">
+        <div class="ringPct">${th.pct}%</div>
+        <div class="ringDir">${th.dir}</div>
+      </div>
+    </div>
+
+    <div class="ringMeta">
+      <div class="ringTitle">${th.name} <span class="pill mono">ESC ${th.escId}</span></div>
+      <div class="ringRow">
+        <span class="${badgeClass}">${th.status}</span>
+        <span class="mono">RPM ${th.rpm ?? "-"}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMotorsRings(state){
+  const leftEl = document.getElementById("motors_left");
+  const rightEl = document.getElementById("motors_right");
+  if(!leftEl || !rightEl) return;
+
+  const ths = THRUSTERS.map(t => thrusterFromState(state, t));
+  const left = ths.filter(x => x.name.startsWith("L"));
+  const right = ths.filter(x => x.name.startsWith("R"));
+
+  leftEl.innerHTML = left.map(renderThrusterRing).join("");
+  rightEl.innerHTML = right.map(renderThrusterRing).join("");
+}

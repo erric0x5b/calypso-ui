@@ -515,3 +515,98 @@ label {
   .missionTop{ grid-template-columns: 1fr; }
   .main .card{ min-height: 60vh; }
 }
+
+.motorsRings{
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:10px;
+}
+
+@media (min-width: 900px){
+  .motorsRings{
+    gap:12px;
+  }
+}
+
+.ringCard{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;
+  background: rgba(255,255,255,.03);
+}
+
+.ring{
+  width:84px;
+  height:84px;
+  flex:0 0 auto;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  position:relative;
+}
+
+.ringInner{
+  width:64px;
+  height:64px;
+  border-radius:999px;
+  background: rgba(0,0,0,.25);
+  border:1px solid rgba(255,255,255,.08);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:2px;
+}
+
+.ringPct{
+  font-size:16px;
+  font-weight:900;
+  color: var(--text);
+  line-height: 1;
+}
+
+.ringDir{
+  font-size:11px;
+  font-weight:800;
+  color: var(--muted);
+  letter-spacing:.3px;
+}
+
+.ringMeta{
+  min-width:0;
+  flex:1;
+}
+
+.ringTitle{
+  font-weight:900;
+  letter-spacing:.2px;
+  margin-bottom:6px;
+  color: var(--text);
+}
+
+.ringRow{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+  font-size:12px;
+  color: var(--muted);
+}
+
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:3px 8px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  font-weight:800;
+}
+
+.badge.ok{ border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.10); color: var(--text); }
+.badge.bad{ border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.10); color: var(--text); }
+.badge.muted{ color: var(--muted); }
