@@ -59,6 +59,7 @@ function parStateLabel(x) {
   return m[x] || `STATE_${x ?? "?"}`;
 }
 
+//
 function renderPowerScada(state){
   const b1 = state.pods?.BAT1 || {};
   const b2 = state.pods?.BAT2 || {};
@@ -288,9 +289,7 @@ function scadaSvg(s) {
   </svg>`;
 }
 
-
-
-
+//--------------- Lights UI (mission view) ---------------
 function setupLights(){
   const host = el("lgt_ctrl");
   if(!host) return;
@@ -354,7 +353,6 @@ function setupLights(){
     }
   }
 }
-
 
 let lightsCfg = null;
 
@@ -472,6 +470,7 @@ function renderLightsCtrl() {
   }
 }
 
+//--------------- Main render (tutto quello che non è mission view) ---------------
 
 function render(state) {
   // ---------- Nodes ----------
@@ -560,6 +559,9 @@ function render(state) {
 
   // Attitude readout + 3D
   const ar = document.getElementById("att_readout");
+  const depth = state.nav?.depth_m;
+  const d = (depth == null) ? "-" : depth.toFixed(1) + " m";
+  ar.textContent = `roll ${r}°  pitch ${p}°  yaw ${y}°  depth ${d}`;
   if (ar) {
     const att = state.att || null;
     let roll = 0, pitch = 0, yaw = 0;
@@ -750,7 +752,6 @@ function renderMainSlot(tab){
   }
 }
 
-
 function renderMainMission(){
   const slot = document.getElementById("main_slot");
   if(!slot) return;
@@ -789,7 +790,6 @@ function renderMainMission(){
 
   ensure3D();
 }
-
 
 function setupTabs() {
   document.querySelectorAll(".tab").forEach(t => {
@@ -949,21 +949,82 @@ function ensure3D(){
 
 function degToRad(d){ return (d || 0) * Math.PI / 180; }
 
+//--------------- Logs UI (mission view) ---------------
+
+// async function refreshLogStatus(){
+//   // Se i controlli log non sono presenti in pagina, non fare nulla
+//   if(!exists("log_status")) return;
+
+//   const j = await fetch("/api/log/status").then(r=>r.json());
+//   const enabled = !!j.enabled;
+//   const sid = j.sid || "-";
+
+//   el("log_status").textContent = `${enabled ? "ON" : "OFF"}  ${sid}`;
+
+//   const zip = el("log_zip");
+//   if(zip){
+//     if(sid && sid !== "-"){
+//       zip.href = `/api/log/zip?sid=${sid}`;
+//       zip.style.pointerEvents = "auto";
+//       zip.style.opacity = "1";
+//     }else{
+//       zip.href = "#";
+//       zip.style.pointerEvents = "none";
+//       zip.style.opacity = ".5";
+//     }
+//   }
+// }
+
+// async function refreshLogSessions(){
+//   if(!exists("log_sessions")) return;
+
+//   const j = await fetch("/api/log/sessions").then(r=>r.json());
+//   const s = j.sessions || [];
+//   el("log_sessions").innerHTML = s.slice(0,8).map(x=>`
+//     <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
+//       <span class="mono">${x.sid}</span>
+//       <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
+//     </div>
+//   `).join("") || "<div class='mono'>No sessions</div>";
+// }
+
+// function setupLogs(){
+//   // Se non hai i bottoni in pagina (come ora), non deve rompere la UI
+//   if(!exists("log_start") || !exists("log_stop")) return;
+
+//   el("log_start").onclick = async ()=>{
+//     await fetch("/api/log/start", {method:"POST"});
+//     await refreshLogStatus();
+//     await refreshLogSessions();
+//   };
+
+//   el("log_stop").onclick = async ()=>{
+//     await fetch("/api/log/stop", {method:"POST"});
+//     await refreshLogStatus();
+//     await refreshLogSessions();
+//   };
+// }
+
+async function apiPost(url, body){
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: body ? JSON.stringify(body) : "{}"
+  });
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j?.err || j?.detail || ("HTTP "+r.status));
+  return j;
+}
+
 async function refreshLogStatus(){
-  // Se i controlli log non sono presenti in pagina, non fare nulla
-  if(!exists("log_status")) return;
-
-  const j = await fetch("/api/log/status").then(r=>r.json());
-  const enabled = !!j.enabled;
-  const sid = j.sid || "-";
-
-  el("log_status").textContent = `${enabled ? "ON" : "OFF"}  ${sid}`;
-
+  const s = await fetch("/api/log/status").then(r=>r.json());
+  const pill = el("log_status");
+  if(pill) pill.textContent = s.enabled ? `ON ${s.sid}` : "OFF";
   const zip = el("log_zip");
   if(zip){
-    if(sid && sid !== "-"){
-      zip.href = `/api/log/zip?sid=${sid}`;
-      zip.style.pointerEvents = "auto";
+    if(s.enabled && s.sid){
+      zip.href = `/api/log/zip?sid=${encodeURIComponent(s.sid)}`;
+      zip.style.pointerEvents = "";
       zip.style.opacity = "1";
     }else{
       zip.href = "#";
@@ -974,34 +1035,62 @@ async function refreshLogStatus(){
 }
 
 async function refreshLogSessions(){
-  if(!exists("log_sessions")) return;
-
   const j = await fetch("/api/log/sessions").then(r=>r.json());
-  const s = j.sessions || [];
-  el("log_sessions").innerHTML = s.slice(0,8).map(x=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;">
-      <span class="mono">${x.sid}</span>
-      <a class="btn" href="/api/log/zip?sid=${x.sid}">ZIP</a>
-    </div>
-  `).join("") || "<div class='mono'>No sessions</div>";
+  const box = el("log_sessions");
+  if(!box) return;
+  const arr = j.sessions || [];
+  if(!arr.length){ box.textContent = "—"; return; }
+  box.innerHTML = arr
+    .sort((a,b)=> (b.sid||"").localeCompare(a.sid||""))
+    .map(x => `• ${x.sid}  <a class="btn" href="/api/log/zip?sid=${encodeURIComponent(x.sid)}">ZIP</a>`)
+    .join("<br>");
 }
 
 function setupLogs(){
-  // Se non hai i bottoni in pagina (come ora), non deve rompere la UI
-  if(!exists("log_start") || !exists("log_stop")) return;
+  const bStart = el("log_start");
+  const bStop  = el("log_stop");
+  if(bStart){
+    bStart.onclick = async () => {
+      try{
+        await apiPost("/api/log/start");
+        await refreshLogStatus();
+        await refreshLogSessions();
+      }catch(e){
+        console.error("log start failed", e);
+      }
+    };
+  }
+  if(bStop){
+    bStop.onclick = async () => {
+      try{
+        await apiPost("/api/log/stop");
+        await refreshLogStatus();
+        await refreshLogSessions();
+      }catch(e){
+        console.error("log stop failed", e);
+      }
+    };
+  }
 
-  el("log_start").onclick = async ()=>{
-    await fetch("/api/log/start", {method:"POST"});
-    await refreshLogStatus();
-    await refreshLogSessions();
-  };
-
-  el("log_stop").onclick = async ()=>{
-    await fetch("/api/log/stop", {method:"POST"});
-    await refreshLogStatus();
-    await refreshLogSessions();
-  };
+  const note = el("log_note");
+  const add  = el("log_note_add");
+  if(add){
+    add.onclick = async () => {
+      try{
+        const text = (note?.value || "").trim();
+        if(!text) return;
+        await apiPost("/api/log/event", {type:"NOTE", text});
+        note.value = "";
+        // opzionale: piccolo feedback in mission_log widget
+        const ml = el("mission_log");
+        if(ml) ml.textContent = "NOTE saved";
+      }catch(e){
+        console.error("log event failed", e);
+      }
+    };
+  }
 }
+
 
 // --- bootstrap ---
 window.addEventListener("DOMContentLoaded", () => {
@@ -1011,6 +1100,8 @@ window.addEventListener("DOMContentLoaded", () => {
     if (s) s.textContent = "init error: " + (err?.message || err);
   });
 });
+
+//--------------- Thrusters UI (mission view) ---------------
 
 // Config thrusters: 6 motori (3 sx / 3 dx). Per ora mappo su ESC 1..6.
 // Più avanti: sostituisci pct/dir con i comandi reali (thruster_cmd).

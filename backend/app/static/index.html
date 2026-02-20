@@ -191,6 +191,10 @@
             <button id="log_stop">STOP</button>
             <span class="pill mono" id="log_status">—</span>
             <a class="btn" id="log_zip" href="#" style="pointer-events:none;opacity:.5;">ZIP</a>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+              <input id="log_note" placeholder="Nota missione..." style="flex:1;min-width:140px;">
+              <button id="log_note_add">ADD</button>
+            </div>
           </div>
           <div style="margin-top:10px;" id="log_sessions" class="mono">—</div>
         </div>
@@ -207,8 +211,7 @@
   }
   </script>
   <script type="module" src="/static/three_boot.js?v=3"></script>
-  <script src="/static/app.js?v=2" defer></script>
-  <script src="/static/app.js?v=2" defer></script>
+  <script type="module" src="/static/js/main.js?v=1"></script>
   <script src="/static/sonar_ping360.js?v=1" defer></script>
 </body>
 

@@ -385,9 +385,6 @@ label {
   -webkit-appearance: slider-vertical;
 }*/
 
-.lgtBtns{ display:flex; gap:6px; justify-content:space-between; margin-top:10px; }
-.lgtBtns button{ flex:1; }
-
 
 /* Lights widget */
 .lgtWrap{ display:flex; flex-direction:column; gap:10px; }
@@ -398,29 +395,6 @@ label {
 }
 
 .lgtCfgBody{ margin-top:8px; }
-
-.lgtGrid{
-  display:grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap:10px;
-  align-items:stretch;
-}
-
-.lgtCh{
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px;
-  padding: 10px;
-  min-width: 0;
-}
-
-.lgtChHead{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:8px;
-  margin-bottom: 8px;
-}
-
-.lgtChName{ font-weight:700; font-size:13px; color: var(--fg); opacity:.92; }
 
 .lgtVCol{
   display:flex; flex-direction:column; align-items:center; gap:8px;
@@ -433,31 +407,7 @@ label {
   transform-origin: center;
 }
 
-.lgtVal{ font-size:12px; opacity:.8; }
-
-/* area 3D: deve avere altezza, altrimenti canvas = 0 */
-.rov3d{
-  width: 100%;
-  min-height: 320px;          /* per dock/tablet */
-  height: 38vh;               /* oppure fisso */
-  max-height: 520px;
-  border-radius: 12px;
-  overflow: hidden;
-  position: relative;
-  background: #0b1220;        /* stesso colore del renderer */
-}
-
 #rov3d { position: relative; }
-#rov3d canvas { display:block; width:100% !important; height:100% !important; }
-
-/* Layout: main + dock */
-.layout{
-  display: grid;
-  grid-template-columns: 1fr clamp(280px, 32vw, 380px);
-  gap: 12px;
-  padding: 0 18px 18px;
-  align-items: start;
-}
 
 /* La card Main deve poter occupare spazio e contenere uno slot che riempie */
 .main .card{
@@ -514,18 +464,6 @@ label {
 @media (max-width: 980px){
   .missionTop{ grid-template-columns: 1fr; }
   .main .card{ min-height: 60vh; }
-}
-
-.motorsRings{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap:10px;
-}
-
-@media (min-width: 900px){
-  .motorsRings{
-    gap:12px;
-  }
 }
 
 .ringCard{
@@ -648,190 +586,57 @@ label {
   opacity: .9;
 }
 
-/* --- Lights control grid: fix vertical sliders layout --- */
-
-.lgtGrid{
-  display:grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  align-items: stretch;
-}
-
-.lgtCh{
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px;
-  padding: 10px;
-  min-width: 0;
-
-  /* layout interno stabile */
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 10px;
-}
-
-.lgtChHead{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:8px;
-  margin: 0;
-}
-
-.lgtChName{
-  font-weight: 900;
-  letter-spacing: .2px;
-}
-
-/* lo slider vero e proprio */
-.lgtSlider{
-  width: 190px;      /* lunghezza corsa */
-  height: 18px;
-}
-
-/* valore sotto al titolo, dentro slider zone */
-.lgtVal{
-  position: absolute;
-  bottom: 8px;
-  left: 0;
-  right: 0;
-  text-align:center;
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 800;
-  pointer-events: none;
-}
-
-.lgtBtns{
-  display:flex;
-  gap: 8px;
-}
-
-.lgtBtns button{
-  flex: 1;
-}
-
-/* ===== Lights control (fix vertical sliders) ===== */
-
-.lgtGrid{
-  display:grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  align-items: stretch;
-}
-
-.lgtCh{
-  background: rgba(255,255,255,.03);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px;
-  padding: 10px;
-  min-width: 0;
-
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 10px;
-}
-
-.lgtChHead{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-
-.lgtChName{
-  font-weight: 900;
-  letter-spacing: .2px;
-}
-
-/* spazio dedicato allo slider */
-.lgtSliderZone{
-  position: relative;
-  height: 190px;          /* regola qui */
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  overflow: hidden;       /* impedisce sovrapposizioni */
-}
-
-/* wrapper ruotato */
-.lgtSliderWrap{
-  width: 190px;           /* uguale a height zona, così è centrato */
-  height: 44px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  transform: rotate(-90deg);
-  transform-origin: center;
-}
-
-.lgtSlider{
-  width: 190px;
-  height: 18px;
-}
-
-.lgtVal{
-  position: absolute;
-  bottom: 8px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 800;
-  pointer-events: none;
-}
-
-.lgtBtns{
-  display:flex;
-  gap: 8px;
-}
-
-.lgtBtns button{
-  flex: 1;
-}
-
 /* ===== Lights control (centering + buttons placement) ===== */
 
+.lgtGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
 .lgtCh{
-  /* lascia la tua base, ma forziamo una struttura più stabile */
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 12px;
+  min-width: 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 12px;
   padding: 12px;
-
-  /* IMPORTANT: spazio “vero” per i bottoni */
   padding-bottom: 14px;
 }
 
+.lgtChHead{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.lgtChName{
+  font-weight: 900;
+  letter-spacing: .2px;
+}
+
 .lgtSliderZone{
-  /* centra davvero */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-
-  /* altezza un pelo più generosa */
   height: 230px;
-
-  /* evita che elementi tocchino i bordi */
   padding: 8px 0;
-
   position: relative;
   overflow: hidden;
 }
 
 .lgtSliderWrap{
-  /* il wrapper ruotato deve stare al centro */
   width: 200px;
   height: 44px;
   display:flex;
   align-items:center;
   justify-content:center;
-
   transform: rotate(-90deg);
   transform-origin: center;
-
-  /* evita “shift” verticali */
   margin: 0;
 }
 
@@ -841,7 +646,6 @@ label {
 }
 
 .lgtVal{
-  /* valore sotto lo slider, centrato */
   position: absolute;
   bottom: 10px;
   left: 0;
@@ -854,12 +658,9 @@ label {
 }
 
 .lgtBtns{
-  /* bottoni sempre sotto e centrati */
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-
-  /* staccali dal bordo */
   margin-top: 6px;
 }
 
@@ -868,7 +669,6 @@ label {
   padding: 10px 0;
   border-radius: 14px;
 }
-
 /* ===== Video ===== */
 .videoToolbar{
   display:flex;
@@ -909,3 +709,5 @@ label {
   object-fit: contain;   /* o cover */
   display:block;
 }
+
+

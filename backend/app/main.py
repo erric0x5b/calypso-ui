@@ -6,6 +6,8 @@ import re
 import io
 import zipfile
 from datetime import datetime
+import csv
+import threading
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -15,9 +17,9 @@ from fastapi import Body
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from pymavlink import mavutil
 
 from backend.app.sonar_ping360 import load_cfg as ping360_load_cfg, save_cfg as ping360_save_cfg, ping360_task
-
 
 app = FastAPI(title="calypso-ui backend")
 
@@ -25,6 +27,23 @@ BASE_DIR = os.path.dirname(__file__)          # /app/backend/app
 STATIC_DIR = os.path.join(BASE_DIR, "static") # /app/backend/app/static
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+LOG_LOCK = threading.Lock()
+
+# stato logging runtime
+log_ctx = {
+    "enabled": False,
+    "sid": None,
+    "telemetry_path": None,
+    "alarms_path": None,
+    "events_path": None,
+    "telemetry_f": None,
+    "alarms_f": None,
+    "events_f": None,
+    "telemetry_csv": None,
+    "alarms_csv": None,
+}
+
 
 @app.get("/ui")
 def ui():
@@ -39,6 +58,8 @@ ping360_stop = asyncio.Event()
 @app.on_event("startup")
 async def startup():
     # ... tuo UDP server ecc.
+    asyncio.create_task(offline_watchdog())
+    asyncio.create_task(mavlink_reader())
 
     async def ws_broadcast(payload: dict):
         dead = []
@@ -49,6 +70,9 @@ async def startup():
                 dead.append(c)
         for c in dead:
             ws_clients.discard(c)
+    
+    if MAVLINK_ENABLED:
+        asyncio.create_task(mavlink_ws_loop())
 
     asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
 
@@ -71,6 +95,9 @@ LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
 OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
 UDP_TX_PORT = int(os.getenv("CALYPSO_UDP_TX_PORT", "14591"))
 UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "udp-sim")
+MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
+MAVLINK_PORT = int(os.getenv("MAVLINK_PORT", "14550"))
+MAVLINK_CONN = f"udp:{MAVLINK_HOST}:{MAVLINK_PORT}"
 
 PROTO_VER = "2"
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -125,6 +152,10 @@ state["logging"] = {
 }
 
 state.setdefault("logging", {"enabled": False, "sid": None})
+
+state.setdefault("att", {"roll_deg": None, "pitch_deg": None, "yaw_deg": None})
+state.setdefault("nav", {"depth_m": None, "heading_deg": None, "alt_m": None})
+state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
 
 ws_clients: set[WebSocket] = set()
 
@@ -582,6 +613,30 @@ def api_log_stop():
     state["logging"] = {"enabled": False, "sid": cur.get("sid")}
     return {"ok": True, "sid": state["logging"]["sid"]}
 
+@app.post("/api/log/event")
+def api_log_event(payload: dict = Body(...)):
+    if not log_is_on():
+        return JSONResponse({"ok": False, "err": "logging disabled"}, status_code=400)
+
+    typ = str(payload.get("type", "NOTE")).upper()
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        return JSONResponse({"ok": False, "err": "text empty"}, status_code=400)
+
+    # arricchimento best-effort (se in futuro metti state.att con heading/depth ecc)
+    att = state.get("att") or {}
+    evt = {
+        "ts_ms": int(state.get("last_update_ms") or 0),
+        "mission_time": att.get("mission_time"),
+        "depth": att.get("depth_m"),
+        "heading": att.get("heading_deg"),
+        "src": "SFC",
+        "type": typ,
+        "text": text,
+    }
+    log_write_event(evt)
+    return {"ok": True}
+
 @app.get("/api/config/lights")
 def api_get_lights_cfg():
     return load_lights_cfg()
@@ -594,3 +649,237 @@ def get_ping360_cfg():
 def set_ping360_cfg(cfg: dict = Body(...)):
     ping360_save_cfg(cfg)
     return {"ok": True}
+
+def session_id_utc() -> str:
+    # YYYYMMDD_HHMMSS
+    return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+def _ensure_log_dir():
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+def log_is_on() -> bool:
+    return bool(state.get("logging", {}).get("enabled"))
+
+def log_status_dict():
+    lg = state.get("logging") or {"enabled": False, "sid": None}
+    return {
+        "enabled": bool(lg.get("enabled")),
+        "sid": lg.get("sid"),
+        "telemetry": lg.get("telemetry"),
+        "alarms": lg.get("alarms"),
+        "events": lg.get("events"),
+    }
+
+def log_start_new_session():
+    with LOG_LOCK:
+        if log_ctx["enabled"]:
+            return log_ctx["sid"]
+
+        _ensure_log_dir()
+        sid = session_id_utc()
+
+        telemetry_path = os.path.join(LOG_DIR, f"telemetry_{sid}.csv")
+        alarms_path    = os.path.join(LOG_DIR, f"alarms_{sid}.csv")
+        events_path    = os.path.join(LOG_DIR, f"events_{sid}.jsonl")
+
+        tf = open(telemetry_path, "w", newline="", encoding="utf-8")
+        af = open(alarms_path, "w", newline="", encoding="utf-8")
+        ef = open(events_path, "a", encoding="utf-8")
+
+        tcsv = csv.writer(tf)
+        acsv = csv.writer(af)
+
+        # header telemetria (minimo, poi estendiamo)
+        tcsv.writerow(["ts_ms", "src", "dst", "msg", "ver", "seq", "raw"])
+        tf.flush()
+
+        # header allarmi
+        acsv.writerow(["ts_ms", "src", "id", "sev", "active", "latched", "text"])
+        af.flush()
+
+        log_ctx.update({
+            "enabled": True,
+            "sid": sid,
+            "telemetry_path": telemetry_path,
+            "alarms_path": alarms_path,
+            "events_path": events_path,
+            "telemetry_f": tf,
+            "alarms_f": af,
+            "events_f": ef,
+            "telemetry_csv": tcsv,
+            "alarms_csv": acsv,
+        })
+
+        state["logging"] = {
+            "enabled": True,
+            "sid": sid,
+            "telemetry": os.path.basename(telemetry_path),
+            "alarms": os.path.basename(alarms_path),
+            "events": os.path.basename(events_path),
+        }
+        return sid
+
+def log_stop_session():
+    with LOG_LOCK:
+        if not log_ctx["enabled"]:
+            return None
+
+        for k in ("telemetry_f", "alarms_f", "events_f"):
+            f = log_ctx.get(k)
+            try:
+                if f:
+                    f.flush()
+                    f.close()
+            except Exception:
+                pass
+
+        sid = log_ctx["sid"]
+        log_ctx.update({
+            "enabled": False,
+            "sid": None,
+            "telemetry_path": None,
+            "alarms_path": None,
+            "events_path": None,
+            "telemetry_f": None,
+            "alarms_f": None,
+            "events_f": None,
+            "telemetry_csv": None,
+            "alarms_csv": None,
+        })
+
+        state["logging"] = {"enabled": False, "sid": None}
+        return sid
+
+def log_write_telemetry_row(ts_ms: int, parsed: dict, raw_line: str):
+    with LOG_LOCK:
+        if not log_ctx["enabled"] or not log_ctx["telemetry_csv"]:
+            return
+        log_ctx["telemetry_csv"].writerow([
+            ts_ms,
+            parsed.get("src"),
+            parsed.get("dst"),
+            parsed.get("msg"),
+            parsed.get("ver"),
+            parsed.get("seq"),
+            raw_line.strip()
+        ])
+        log_ctx["telemetry_f"].flush()
+
+def log_write_alarm(alarm: dict):
+    with LOG_LOCK:
+        if not log_ctx["enabled"] or not log_ctx["alarms_csv"]:
+            return
+        log_ctx["alarms_csv"].writerow([
+            alarm.get("ts_ms"),
+            alarm.get("src"),
+            alarm.get("id"),
+            alarm.get("sev"),
+            alarm.get("active"),
+            alarm.get("latched"),
+            alarm.get("text"),
+        ])
+        log_ctx["alarms_f"].flush()
+
+def log_write_event(evt: dict):
+    with LOG_LOCK:
+        if not log_ctx["enabled"] or not log_ctx["events_f"]:
+            return
+        log_ctx["events_f"].write(json.dumps(evt, ensure_ascii=False) + "\n")
+        log_ctx["events_f"].flush()
+        
+async def mavlink_reader():
+    # pymavlink è blocking: lo mettiamo in thread
+    def _run():
+        m = mavutil.mavlink_connection(MAVLINK_CONN, autoreconnect=True, source_system=255)
+        # opzionale: aspetta heartbeat per sysid/compid
+        # m.wait_heartbeat(timeout=10)
+
+        while True:
+            msg = m.recv_match(blocking=True, timeout=1)
+            if msg is None:
+                continue
+
+            t = now_ms()
+            state["mav"]["last_ms"] = t
+            state["mav"]["msgs"] += 1
+
+            mt = msg.get_type()
+
+            # ATTITUDE: roll/pitch/yaw in radianti
+            if mt == "ATTITUDE":
+                state["att"]["roll_deg"]  = msg.roll  * 57.295779513
+                state["att"]["pitch_deg"] = msg.pitch * 57.295779513
+                state["att"]["yaw_deg"]   = msg.yaw   * 57.295779513
+
+            # VFR_HUD: heading in gradi, alt in m
+            elif mt == "VFR_HUD":
+                state["nav"]["heading_deg"] = getattr(msg, "heading", None)
+                state["nav"]["alt_m"] = getattr(msg, "alt", None)
+
+            # SCALED_PRESSURE2 / NAMED_VALUE_FLOAT / AHRS2 ecc: depth dipende da setup
+            # Per BlueROV spesso la profondità arriva su VFR_HUD.alt o su messaggi custom.
+            # Per ora lasciamo slot generico:
+            elif mt == "GLOBAL_POSITION_INT":
+                # msg.relative_alt è in mm, non depth. utile per altitudine relativa.
+                pass
+
+    await asyncio.to_thread(_run)
+    
+async def mavlink_ws_loop():
+    # pip install websockets
+    import json
+    import asyncio
+    import websockets
+
+    while True:
+        try:
+            print(f"[mavlink] connecting to {MAVLINK_WS_URL}")
+            async with websockets.connect(
+                MAVLINK_WS_URL,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=5,
+                max_size=2_000_000,
+            ) as ws:
+                print("[mavlink] connected")
+
+                async for raw in ws:
+                    try:
+                        obj = json.loads(raw)
+                    except Exception:
+                        continue
+
+                    msg = (obj.get("message") or {})
+                    mtype = msg.get("type")
+
+                    # ---- AHRS2: roll/pitch/yaw + altitude (depth) ----
+                    if mtype == "AHRS2":
+                        # in mavlink2rest spesso sono già in gradi (come nel tuo screenshot: 0.0)
+                        roll = msg.get("roll")
+                        pitch = msg.get("pitch")
+                        yaw = msg.get("yaw")
+                        alt = msg.get("altitude")  # nel tuo caso: negativo = profondità
+
+                        # state.att per UI 3D
+                        state["att"] = {
+                            "roll_deg": float(roll) if roll is not None else None,
+                            "pitch_deg": float(pitch) if pitch is not None else None,
+                            "yaw_deg": float(yaw) if yaw is not None else None,
+                        }
+
+                        # depth: se altitude è negativa, depth = -altitude (m)
+                        if alt is not None:
+                            altf = float(alt)
+                            depth_m = (-altf) if altf < 0 else altf
+                            state["nav"] = state.get("nav", {})
+                            state["nav"]["depth_m"] = depth_m
+
+                        # opzionale: notifica UI senza fare fetch /api/state (se già usi "update")
+                        asyncio.create_task(ws_broadcast({"type": "update", "src": "MAV", "msg": mtype}))
+
+                    # ---- opzionale: altri tipi (ATTITUDE, VFR_HUD, etc) ----
+                    # elif mtype == "ATTITUDE":
+                    #     ...
+        except Exception as e:
+            print(f"[mavlink] error: {e}")
+            await asyncio.sleep(2.0)
