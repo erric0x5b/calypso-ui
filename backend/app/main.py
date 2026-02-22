@@ -17,9 +17,16 @@ from fastapi import Body
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
-from pymavlink import mavutil
+from fastapi.responses import HTMLResponse
+try:
+    from pymavlink import mavutil
+except ModuleNotFoundError:
+    mavutil = None
 
 from backend.app.sonar_ping360 import load_cfg as ping360_load_cfg, save_cfg as ping360_save_cfg, ping360_task
+from backend.app import parser
+from backend.app import lights_cfg
+from backend.app import logging as app_logging
 
 app = FastAPI(title="calypso-ui backend")
 
@@ -27,22 +34,6 @@ BASE_DIR = os.path.dirname(__file__)          # /app/backend/app
 STATIC_DIR = os.path.join(BASE_DIR, "static") # /app/backend/app/static
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-LOG_LOCK = threading.Lock()
-
-# stato logging runtime
-log_ctx = {
-    "enabled": False,
-    "sid": None,
-    "telemetry_path": None,
-    "alarms_path": None,
-    "events_path": None,
-    "telemetry_f": None,
-    "alarms_f": None,
-    "events_f": None,
-    "telemetry_csv": None,
-    "alarms_csv": None,
-}
 
 
 @app.get("/ui")
@@ -59,7 +50,10 @@ ping360_stop = asyncio.Event()
 async def startup():
     # ... tuo UDP server ecc.
     asyncio.create_task(offline_watchdog())
-    asyncio.create_task(mavlink_reader())
+    if MAVLINK_PYMAVLINK_ENABLED:
+        asyncio.create_task(mavlink_reader())
+    elif MAVLINK_ENABLED:
+        print("[mavlink] pymavlink non disponibile: reader disabilitato")
 
     async def ws_broadcast(payload: dict):
         dead = []
@@ -71,22 +65,14 @@ async def startup():
         for c in dead:
             ws_clients.discard(c)
     
-    if MAVLINK_ENABLED:
+    if MAVLINK_WS_ENABLED:
         asyncio.create_task(mavlink_ws_loop())
 
     asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
 
 # -------- Lights Config --------
-LIGHTS_CFG_PATH = os.getenv("CALYPSO_LIGHTS_CFG", "/data/deepex_logs/lights_config.json")
-DEFAULT_LIGHTS_CFG = {
-    "version": 1,
-    "channels": {
-        "1": {"name": "CH1", "lamp_ids": []},
-        "2": {"name": "CH2", "lamp_ids": []},
-        "3": {"name": "CH3", "lamp_ids": []},
-        "4": {"name": "CH4", "lamp_ids": []},
-    }
-}
+LIGHTS_CFG_PATH = lights_cfg.LIGHTS_CFG_PATH
+DEFAULT_LIGHTS_CFG = lights_cfg.DEFAULT_LIGHTS_CFG
 
 # -------- Config --------
 HTTP_PORT = int(os.getenv("CALYPSO_HTTP_PORT", "8080"))
@@ -98,64 +84,20 @@ UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "udp-sim")
 MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
 MAVLINK_PORT = int(os.getenv("MAVLINK_PORT", "14550"))
 MAVLINK_CONN = f"udp:{MAVLINK_HOST}:{MAVLINK_PORT}"
+MAVLINK_WS_URL = os.getenv("MAVLINK_WS_URL", "")
+MAVLINK_ENABLED = os.getenv("MAVLINK_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+MAVLINK_PYMAVLINK_ENABLED = MAVLINK_ENABLED and (mavutil is not None)
+MAVLINK_WS_ENABLED = MAVLINK_ENABLED and bool(MAVLINK_WS_URL)
 
 PROTO_VER = "2"
 os.makedirs(LOG_DIR, exist_ok=True)
 
-telemetry_path = os.path.join(LOG_DIR, f"telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-alarms_path = os.path.join(LOG_DIR, f"alarms_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-events_path = os.path.join(LOG_DIR, f"events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
 
-for pth in (telemetry_path, alarms_path, events_path):
-    open(pth, "a", encoding="utf-8").close()
-    
-def make_sid() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+# state moved to backend.app.state
+from backend.app.state import state, latest, init_state, update_state, next_cmd_id, set_session_paths, new_session_paths, make_sid, append_telemetry_csv
 
-def set_session_paths(sid: str):
-    global telemetry_path, alarms_path, events_path
-    telemetry_path = os.path.join(LOG_DIR, f"telemetry_{sid}.csv")
-    alarms_path    = os.path.join(LOG_DIR, f"alarms_{sid}.csv")
-    events_path    = os.path.join(LOG_DIR, f"events_{sid}.jsonl")
-    for pth in (telemetry_path, alarms_path, events_path):
-        os.makedirs(os.path.dirname(pth), exist_ok=True)
-        open(pth, "a", encoding="utf-8").close()
-
-    
-udp_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-# -------- State (very simple for now) --------
-latest = {"last_line": None}
-
-state = {
-    "proto": {"ver": 2},
-    "nodes": {},   # per node online/offline + last_hb
-    "pods": {"BAT1": {}, "BAT2": {}},
-    "esc": {},     # esc_id -> data
-    "alarms_active": [],
-    "alarms_history": [],
-    "counters": {
-        "udp_rx": 0,
-        "parse_ok": 0,
-        "parse_err": 0,
-        "cksum_err": 0,
-    },
-    "last_update_ms": None,
-}
-
-state["logging"] = {
-    "enabled": True,                 # di default ON (come ora)
-    "sid": datetime.now().strftime("%Y%m%d_%H%M%S"),
-    "telemetry_path": telemetry_path,
-    "alarms_path": alarms_path,
-    "events_path": events_path,
-}
-
-state.setdefault("logging", {"enabled": False, "sid": None})
-
-state.setdefault("att", {"roll_deg": None, "pitch_deg": None, "yaw_deg": None})
-state.setdefault("nav", {"depth_m": None, "heading_deg": None, "alt_m": None})
-state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
+# initialize state (creates initial logging files and metadata)
+init_state(LOG_DIR)
 
 ws_clients: set[WebSocket] = set()
 
@@ -167,184 +109,33 @@ def new_session_paths(sid: str):
         open(pth, "a", encoding="utf-8").close()
     return t, a, e
 
-def save_lights_cfg(cfg: dict):
-    os.makedirs(os.path.dirname(LIGHTS_CFG_PATH), exist_ok=True)
-    with open(LIGHTS_CFG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
-
-def load_lights_cfg() -> dict:
-    try:
-        with open(LIGHTS_CFG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        save_lights_cfg(DEFAULT_LIGHTS_CFG)
-        return DEFAULT_LIGHTS_CFG
-
-    # normalize/merge
-    if "channels" not in cfg or not isinstance(cfg["channels"], dict):
-        cfg["channels"] = {}
-
-    for k in ("1","2","3","4"):
-        ch = cfg["channels"].get(k)
-        if not isinstance(ch, dict):
-            ch = {"name": f"CH{k}", "lamp_ids": []}
-            cfg["channels"][k] = ch
-        ch.setdefault("name", f"CH{k}")
-        ch.setdefault("lamp_ids", [])
-        # sanitize lamp_ids
-        lamp_ids = ch.get("lamp_ids", [])
-        if not isinstance(lamp_ids, list):
-            lamp_ids = []
-        lamp_ids = [int(x) for x in lamp_ids if isinstance(x, int) or (isinstance(x, str) and x.isdigit())]
-        lamp_ids = sorted(set([x for x in lamp_ids if x >= 1]))
-        ch["lamp_ids"] = lamp_ids
-
-    cfg["version"] = int(cfg.get("version", 1))
-    return cfg
+# delegate lights config to module
+load_lights_cfg = lights_cfg.load_lights_cfg
+save_lights_cfg = lights_cfg.save_lights_cfg
 
 def build_nmea_line(fields: list[str]) -> str:
-    payload = ",".join(fields)
-    cs = nmea_xor_checksum(payload)
-    return f"${payload}*{cs}\r\n"
-
-_cmd_id = 0
-def next_cmd_id() -> int:
-    global _cmd_id
-    _cmd_id = (_cmd_id + 1) & 0xFFFFFFFF
-    return _cmd_id
-
-def nmea_xor_checksum(payload: str) -> str:
-    # XOR of all chars in payload (already excludes '$' and '*')
-    c = 0
-    for ch in payload:
-        c ^= ord(ch)
-    return f"{c:02X}"
-    
-def kv_payload_to_dict(rest: list[str]) -> dict:
-    # rest = [k1,v1,k2,v2,...]
-    out = {}
-    n = len(rest)
-    for i in range(0, n - 1, 2):
-        k = rest[i].strip()
-        v = rest[i + 1].strip()
-        if not k:
-            continue
-        # prova cast int, altrimenti lascia stringa
-        try:
-            if v.lower().startswith("0x"):
-                out[k] = int(v, 16)
-            else:
-                out[k] = int(v)
-        except Exception:
-            out[k] = v
-    return out
-    
-def ensure_node(node: str):
-    if node not in state["nodes"]:
-        state["nodes"][node] = {
-            "online": False,
-            "last_hb_ms": None,
-            "last_seen_ms": None,
-        }
-
-def update_state(parsed: dict):
-    msg = parsed["msg"]
-    src = parsed["src"]
-    ts = parsed["ts_ms"]
-    kv = kv_payload_to_dict(parsed["rest"])
-
-    state["counters"]["parse_ok"] += 1
-    state["last_update_ms"] = ts
-
-    # Qualsiasi pacchetto ricevuto: last_seen
-    ensure_node(src)
-    state["nodes"][src]["last_seen_ms"] = ts
-
-    if msg == "HB":
-        state["nodes"][src]["online"] = True
-        state["nodes"][src]["last_hb_ms"] = ts
-        # opzionale: salva anche kv HB
-        state["nodes"][src].update({"hb": kv})
-        return
-
-    if msg == "ENV" and src in state["pods"]:
-        state["pods"][src].update(kv)
-        return
-
-    if msg == "PWR" and src in state["pods"]:
-        state["pods"][src].update(kv)
-        return
-
-    if msg == "DIG" and src in state["pods"]:
-        # fault info
-        state["pods"][src].update(kv)
-        return
-
-    if msg == "ESC":
-        # deve avere VescId
-        esc_id = kv.get("VescId")
-        if esc_id is None:
-            return
-        esc_id = int(esc_id)
-        if esc_id not in state["esc"]:
-            state["esc"][esc_id] = {}
-        # oltre ai kv, mettiamo anche source e timestamp
-        state["esc"][esc_id].update(kv)
-        state["esc"][esc_id]["src"] = src
-        state["esc"][esc_id]["ts_ms"] = ts
-        return
-
-    if msg == "ALM":
-        # formato minimo: Id, Sev, Active, Latched, Text/TextB64
-        alarm = {
-            "ts_ms": ts,
-            "src": src,
-            "id": kv.get("Id"),
-            "sev": kv.get("Sev"),
-            "active": kv.get("Active", 1),
-            "latched": kv.get("Latched", 0),
-            "text": kv.get("Text") or kv.get("TextB64"),
-        }
-        state["alarms_history"].append(alarm)
-        # aggiorna active list
-        if alarm["active"]:
-            state["alarms_active"] = [a for a in state["alarms_active"] if not (a.get("id") == alarm["id"] and a.get("src") == src)]
-            state["alarms_active"].append(alarm)
-        else:
-            state["alarms_active"] = [a for a in state["alarms_active"] if not (a.get("id") == alarm["id"] and a.get("src") == src)]
-        return
+    return parser.build_nmea_line(fields)
 
 def parse_nmea_line(line: str):
-    # Expected: $...*CS\r\n
-    line = line.strip()
-    if not line.startswith("$") or "*" not in line:
-        return None, "format"
-    payload, cs = line[1:].split("*", 1)
-    cs = cs[:2].upper()
-    exp = nmea_xor_checksum(payload)
-    if cs != exp:
-        return None, "checksum"
-    parts = payload.split(",")
-    if len(parts) < 6:
-        return None, "fields"
-    src, dst, msg, ver, seq, ts_ms, *rest = parts
-    return {
-        "src": src,
-        "dst": dst,
-        "msg": msg,
-        "ver": ver,
-        "seq": int(seq),
-        "ts_ms": int(ts_ms),
-        "raw": line,
-        "rest": rest,
-    }, None
+    return parser.parse_nmea_line(line)
 
-def append_telemetry_csv(p):
-    if not state.get("logging", {}).get("enabled"):
-        return
-    raw_escaped = p["raw"].replace('"', '""')
-    with open(telemetry_path, "a", encoding="utf-8") as f:
-        f.write(f'{p["ts_ms"]},{p["src"]},{p["msg"]},"{raw_escaped}"\n')
+_cmd_id = 0
+# delegate lights config to module
+load_lights_cfg = lights_cfg.load_lights_cfg
+save_lights_cfg = lights_cfg.save_lights_cfg
+
+# initialize logging module with references
+app_logging.init_logging(LOG_DIR, state)
+# expose logging functions locally for compatibility
+log_start_new_session = app_logging.log_start_new_session
+log_stop_session = app_logging.log_stop_session
+log_write_telemetry_row = app_logging.log_write_telemetry_row
+log_write_alarm = app_logging.log_write_alarm
+log_write_event = app_logging.log_write_event
+log_is_on = app_logging.log_is_on
+log_status_dict = app_logging.log_status_dict
+# logging status accessor (delegated to backend.app.logging)
+log_status_dict = app_logging.log_status_dict
 
 
 async def ws_broadcast(obj: dict):
@@ -653,139 +444,7 @@ def set_ping360_cfg(cfg: dict = Body(...)):
 def session_id_utc() -> str:
     # YYYYMMDD_HHMMSS
     return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-
-def _ensure_log_dir():
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-def log_is_on() -> bool:
-    return bool(state.get("logging", {}).get("enabled"))
-
-def log_status_dict():
-    lg = state.get("logging") or {"enabled": False, "sid": None}
-    return {
-        "enabled": bool(lg.get("enabled")),
-        "sid": lg.get("sid"),
-        "telemetry": lg.get("telemetry"),
-        "alarms": lg.get("alarms"),
-        "events": lg.get("events"),
-    }
-
-def log_start_new_session():
-    with LOG_LOCK:
-        if log_ctx["enabled"]:
-            return log_ctx["sid"]
-
-        _ensure_log_dir()
-        sid = session_id_utc()
-
-        telemetry_path = os.path.join(LOG_DIR, f"telemetry_{sid}.csv")
-        alarms_path    = os.path.join(LOG_DIR, f"alarms_{sid}.csv")
-        events_path    = os.path.join(LOG_DIR, f"events_{sid}.jsonl")
-
-        tf = open(telemetry_path, "w", newline="", encoding="utf-8")
-        af = open(alarms_path, "w", newline="", encoding="utf-8")
-        ef = open(events_path, "a", encoding="utf-8")
-
-        tcsv = csv.writer(tf)
-        acsv = csv.writer(af)
-
-        # header telemetria (minimo, poi estendiamo)
-        tcsv.writerow(["ts_ms", "src", "dst", "msg", "ver", "seq", "raw"])
-        tf.flush()
-
-        # header allarmi
-        acsv.writerow(["ts_ms", "src", "id", "sev", "active", "latched", "text"])
-        af.flush()
-
-        log_ctx.update({
-            "enabled": True,
-            "sid": sid,
-            "telemetry_path": telemetry_path,
-            "alarms_path": alarms_path,
-            "events_path": events_path,
-            "telemetry_f": tf,
-            "alarms_f": af,
-            "events_f": ef,
-            "telemetry_csv": tcsv,
-            "alarms_csv": acsv,
-        })
-
-        state["logging"] = {
-            "enabled": True,
-            "sid": sid,
-            "telemetry": os.path.basename(telemetry_path),
-            "alarms": os.path.basename(alarms_path),
-            "events": os.path.basename(events_path),
-        }
-        return sid
-
-def log_stop_session():
-    with LOG_LOCK:
-        if not log_ctx["enabled"]:
-            return None
-
-        for k in ("telemetry_f", "alarms_f", "events_f"):
-            f = log_ctx.get(k)
-            try:
-                if f:
-                    f.flush()
-                    f.close()
-            except Exception:
-                pass
-
-        sid = log_ctx["sid"]
-        log_ctx.update({
-            "enabled": False,
-            "sid": None,
-            "telemetry_path": None,
-            "alarms_path": None,
-            "events_path": None,
-            "telemetry_f": None,
-            "alarms_f": None,
-            "events_f": None,
-            "telemetry_csv": None,
-            "alarms_csv": None,
-        })
-
-        state["logging"] = {"enabled": False, "sid": None}
-        return sid
-
-def log_write_telemetry_row(ts_ms: int, parsed: dict, raw_line: str):
-    with LOG_LOCK:
-        if not log_ctx["enabled"] or not log_ctx["telemetry_csv"]:
-            return
-        log_ctx["telemetry_csv"].writerow([
-            ts_ms,
-            parsed.get("src"),
-            parsed.get("dst"),
-            parsed.get("msg"),
-            parsed.get("ver"),
-            parsed.get("seq"),
-            raw_line.strip()
-        ])
-        log_ctx["telemetry_f"].flush()
-
-def log_write_alarm(alarm: dict):
-    with LOG_LOCK:
-        if not log_ctx["enabled"] or not log_ctx["alarms_csv"]:
-            return
-        log_ctx["alarms_csv"].writerow([
-            alarm.get("ts_ms"),
-            alarm.get("src"),
-            alarm.get("id"),
-            alarm.get("sev"),
-            alarm.get("active"),
-            alarm.get("latched"),
-            alarm.get("text"),
-        ])
-        log_ctx["alarms_f"].flush()
-
-def log_write_event(evt: dict):
-    with LOG_LOCK:
-        if not log_ctx["enabled"] or not log_ctx["events_f"]:
-            return
-        log_ctx["events_f"].write(json.dumps(evt, ensure_ascii=False) + "\n")
-        log_ctx["events_f"].flush()
+# logging functions are provided by backend.app.logging (app_logging)
         
 async def mavlink_reader():
     # pymavlink è blocking: lo mettiamo in thread
@@ -883,3 +542,22 @@ async def mavlink_ws_loop():
         except Exception as e:
             print(f"[mavlink] error: {e}")
             await asyncio.sleep(2.0)
+
+@app.get("/register_service")
+def register_service():
+    return {
+        "name": "Calypso UI",
+        "description": "DeepEx ROV UI",
+        "icon": "mdi-submarine",
+        "company": "DeepEx",
+        "version": "0.4.0",
+
+        # BlueOS UI behavior
+        "new_page": False,
+        "avoid_iframes": False,            # metti True se la tua UI blocca iframe / ha CSP rigide
+        "works_in_relative_paths": True,   # consigliato con proxy / accesso remoto
+
+        # IMPORTANT: questi devono essere path locali del servizio
+        "webpage": "/ui",                    # oppure "/ui" se hai un mount dedicato
+        "api": "/docs"                     # FastAPI swagger
+    }
