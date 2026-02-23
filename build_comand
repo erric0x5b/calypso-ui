@@ -1,0 +1,7 @@
+docker buildx build `
+  --platform linux/arm64 `
+  -t ghcr.io/erric0x5b/calypso-ui:latest `
+  -f .\docker\Dockerfile `
+  --cache-from type=registry,ref=ghcr.io/erric0x5b/calypso-ui:buildcache `
+  --cache-to type=registry,ref=ghcr.io/erric0x5b/calypso-ui:buildcache,mode=max `
+  --push .

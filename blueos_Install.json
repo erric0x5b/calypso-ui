@@ -1,0 +1,14 @@
+{
+  "identifier": "it.deepex.calypso-ui",
+  "name": "Calypso UI",
+  "docker": "ghcr.io/erric0x5b/calypso-ui",
+  "tag": "latest",
+  "permissions": {
+    "ExposedPorts": { "80/tcp": {} },
+    "HostConfig": {
+      "ExtraHosts": ["host.docker.internal:host-gateway"],
+      "PortBindings": { "80/tcp": [ { "HostPort": "" } ] },
+      "Binds": [ "/usr/blueos/extensions/it.deepex.calypso-ui:/data" ]
+    }
+  }
+}

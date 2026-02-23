@@ -43,6 +43,10 @@ function render(state) {
     if (ar) {
         const att = state.att || null;
         let roll = 0, pitch = 0, yaw = 0;
+
+        //console.log("att raw deg:", att?.roll_deg, att?.pitch_deg, att?.yaw_deg);
+        //console.log("degToRad test 12:", th3.degToRad(12));
+
         if (att && (att.roll_deg != null || att.pitch_deg != null || att.yaw_deg != null)) {
             roll = th3.degToRad(att.roll_deg || 0);
             pitch = th3.degToRad(att.pitch_deg || 0);
@@ -60,9 +64,12 @@ function render(state) {
         const depth = state.nav?.depth_m;
         const d = (depth == null) ? "-" : depth.toFixed(1) + " m";
         ar.textContent = `roll ${r}°  pitch ${p}°  yaw ${y}°  depth ${d}`;
+
+        //console.log("roll rad:", roll, "roll deg shown:", (roll*180/Math.PI));
+
     }
 
-    thrusters.renderMotorsRings(state);
+    thrusters.renderMotorsRingsAdvanced(state);
 }
 
 async function init() {
@@ -89,27 +96,83 @@ async function init() {
 
     const wsProto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
+
     ws.onopen = () => { const s = utils.el("status"); if (s) s.textContent = "WS connected"; };
     ws.onclose = () => { const s = utils.el("status"); if (s) s.textContent = "WS closed"; };
     ws.onerror = () => { const s = utils.el("status"); if (s) s.textContent = "WS error"; };
+
+    // --- WS -> refresh state (throttled) ---
+    //let snapshot = null;
+
+    let fetchInFlight = false;
+    let fetchScheduled = false;
+    let lastFetchMs = 0;
+    const MIN_FETCH_INTERVAL_MS = 150; // ~6.6Hz (metti 100 se vuoi ~10Hz)
+
+    async function refreshState(lastRaw) {
+        // se c’è già una fetch in corso, schedula un refresh dopo
+        if (fetchInFlight) {
+            fetchScheduled = true;
+            return;
+        }
+
+        const now = performance.now();
+        const dt = now - lastFetchMs;
+        if (dt < MIN_FETCH_INTERVAL_MS) {
+            // troppo presto: schedula un refresh quando scade l’intervallo
+            if (!fetchScheduled) {
+                fetchScheduled = true;
+                setTimeout(() => {
+                    fetchScheduled = false;
+                    refreshState(lastRaw);
+                }, MIN_FETCH_INTERVAL_MS - dt);
+            }
+            return;
+        }
+
+        fetchInFlight = true;
+        lastFetchMs = now;
+
+        try {
+            const r = await fetch("/api/state", { cache: "no-store" });
+            const s = await r.json();
+            snapshot = s;
+            if (lastRaw) snapshot.__last_raw = lastRaw;
+            render(snapshot);
+        } catch (e) {
+            console.warn("Failed to fetch /api/state", e);
+        } finally {
+            fetchInFlight = false;
+            // se durante la fetch è arrivato altro, fai un refresh subito (ma sempre throttled)
+            if (fetchScheduled) {
+                fetchScheduled = false;
+                refreshState();
+            }
+        }
+    }
+
     ws.onmessage = (ev) => {
         try {
             const msg = JSON.parse(ev.data);
-            if (msg.type === "udp" || msg.type === "alarm" || msg.type === "update") {
-                const lastRaw = msg.raw;
-                fetch("/api/state").then(r => r.json()).then(s => {
-                    snapshot = s;
-                    if (lastRaw)
-                        snapshot.__last_raw = lastRaw;
-                    render(snapshot);
-                });
+
+            if (msg.type === "thr" && msg.thr) {
+            snapshot = snapshot || {};
+            snapshot.thr = msg.thr;
+            render(snapshot);
+            return;
             }
+
             if (msg.type === "sonar") {
-                if (window.sonarPing360)
-                    window.sonarPing360.apply(msg);
+                if (window.sonarPing360) window.sonarPing360.apply(msg);
                 return;
             }
-        } catch (e) { }
+
+            if (msg.type === "udp" || msg.type === "alarm") {
+                refreshState(msg.raw);
+                }
+        } catch (e) {
+            // ignora pacchetti non JSON
+        }
     };
 }
 
@@ -151,12 +214,12 @@ function renderWidgetsMenu() {
     if (!panel)
         return;
     panel.innerHTML = WIDGETS.map(w => `<label><input type="checkbox" ${uiPrefs.visible[w.id] ? "checked" : ""} data-wid="${w.id}"><span>${w.title}</span></label>`).join("");
-    panel.querySelectorAll("input[type=checkbox]").forEach(cb => { 
+    panel.querySelectorAll("input[type=checkbox]").forEach(cb => {
         cb.addEventListener('change', () => {
-            uiPrefs.visible[cb.dataset.wid] = cb.checked; 
-            saveUiPrefs(uiPrefs); 
-            applyWidgetVisibility(); 
-        }); 
+            uiPrefs.visible[cb.dataset.wid] = cb.checked;
+            saveUiPrefs(uiPrefs);
+            applyWidgetVisibility();
+        });
     });
 }
 

@@ -7,7 +7,7 @@
     "4": { "name": "CH4",  "lamp_ids": [] }
   },
   "defaults": {
-    "mode": "ON",
+    "mode": "OFF",
     "dim": 600
   }
 }

@@ -1,12 +1,13 @@
 import { setHTML } from './utils.js';
 
-export const THRUSTERS = [
-  { side:"L", slot:1, escId:1, name:"L1" },
-  { side:"L", slot:2, escId:2, name:"L2" },
-  { side:"L", slot:3, escId:3, name:"L3" },
-  { side:"R", slot:1, escId:4, name:"R1" },
-  { side:"R", slot:2, escId:5, name:"R2" },
-  { side:"R", slot:3, escId:6, name:"R3" },
+export const THR_MAP = [
+  { name:"TH1", th:"TH1", escId:1, label:"1", pos:"FL", side:"L", order:1 },
+  { name:"TH6", th:"TH6", escId:6, label:"6", pos:"ML", side:"L", order:2 },
+  { name:"TH3", th:"TH3", escId:3, label:"3", pos:"RL", side:"L", order:3 },
+
+  { name:"TH2", th:"TH2", escId:2, label:"2", pos:"FR", side:"R", order:1 },
+  { name:"TH5", th:"TH5", escId:5, label:"5", pos:"MR", side:"R", order:2 },
+  { name:"TH4", th:"TH4", escId:4, label:"4", pos:"RR", side:"R", order:3 },
 ];
 
 export function ringSvg(pct, status){
@@ -38,7 +39,7 @@ export function thrusterFromState(state, t){
   const dir = (rpm < 0) ? "REV" : "FWD";
   const on = pct > 1;
   const bad = false;
-  return { name: t.name, escId: t.escId, pct, dir, rpm, status: bad ? "BAD" : (on ? "ON" : "OFF") };
+  return { name: t.name, escId: t.escId, pct, dir, rpm, side: t.side, status: bad ? "BAD" : (on ? "ON" : "OFF") };
 }
 
 export function renderThrusterRing(th){
@@ -70,26 +71,38 @@ export function renderThrusterRing(th){
 export function renderMotorsRings(state){
   const leftEl = document.getElementById("motors_left");
   const rightEl = document.getElementById("motors_right");
-  if(!leftEl || !rightEl) return;
-  const ths = THRUSTERS.map(t => thrusterFromState(state, t));
-  const left = ths.filter(x => x.name.startsWith("L"));
-  const right = ths.filter(x => x.name.startsWith("R"));
+
+  if(!leftEl || !rightEl) 
+    return;
+
+  const ths = THR_MAP.map(t => thrusterFromState(state, t));
+
+  const left = ths.filter(x => x.side === "L");
+  const right = ths.filter(x => x.side === "R");
+
   leftEl.innerHTML = left.map(renderThrusterRing).join("");
   rightEl.innerHTML = right.map(renderThrusterRing).join("");
 }
 
-// advanced ring renderer (mission panel)
 export function thrusterRingSvg(label, cmdPct, rpm){
-  const r = 44; const cx = 60, cy = 60; const C = 2 * Math.PI * r;
+  const r = 44, cx = 60, cy = 60;
+  const C = 2 * Math.PI * r;
+
   let pct = (cmdPct == null) ? 0 : Math.max(0, Math.min(100, Math.abs(cmdPct)));
   const dash = (pct/100) * C;
-  const col = (cmdPct == null) ? "#6b7280" : (cmdPct > 2 ? "#22c55e" : (cmdPct < -2 ? "#ef4444" : "#6b7280"));
+  const col = (cmdPct == null) ? "#6b7280" : (cmdPct > 2 ? "#22c55e" : (cmdPct < -2 ? "#32c7f5" : "#6b7280"));
   const cmdTxt = (cmdPct == null) ? "—" : `${Math.round(cmdPct)}%`;
   const rpmTxt = (rpm == null) ? "rpm —" : `rpm ${rpm}`;
+  const dirTxt = (cmdPct == null) ? "" : (cmdPct > 2 ? "FWD" : (cmdPct < -2 ? "REV" : "HOLD"));
+
+  // ID unico (solo caratteri sicuri)
+  const uid = String(label).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const glowId = `ringGlow_${uid}`;
+
   return `
-  <svg class="thRing" viewBox="0 0 120 120">
+  <svg class="thRing" viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet">
     <defs>
-      <filter id="ringGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <filter id="${glowId}" x="-50%" y="-50%" width="200%" height="200%">
         <feGaussianBlur stdDeviation="3" result="b"/>
         <feMerge>
           <feMergeNode in="b"/>
@@ -98,24 +111,32 @@ export function thrusterRingSvg(label, cmdPct, rpm){
       </filter>
     </defs>
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="10"/>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${dash} ${C - dash}" transform="rotate(-90 ${cx} ${cy})" filter="url(#ringGlow)"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round"
+      stroke-dasharray="${dash} ${C - dash}" transform="rotate(-90 ${cx} ${cy})" filter="url(#${glowId})"/>
     <text x="${cx}" y="46" text-anchor="middle" class="thLabel">${label}</text>
     <text x="${cx}" y="72" text-anchor="middle" class="thValue">${cmdTxt}</text>
     <text x="${cx}" y="92" text-anchor="middle" class="thSub">${rpmTxt}</text>
   </svg>`;
 }
 
-export const THR_MAP = [
-  { th:"TH1", esc:1 }, { th:"TH2", esc:2 }, { th:"TH3", esc:3 },
-  { th:"TH4", esc:4 }, { th:"TH5", esc:5 }, { th:"TH6", esc:6 },
-];
 
 export function renderMotorsRingsAdvanced(state){
   const thr = state.thr || {};
   const getCmd = (th) => (thr[th]?.CmdPct ?? null);
   const getRpm = (escId, th) => (thr[th]?.RPM ?? state.esc?.[escId]?.RPM ?? null);
-  const left = THR_MAP.slice(0,3).map(x => thrusterRingSvg(x.th, getCmd(x.th), getRpm(x.esc, x.th))).join("");
-  const right = THR_MAP.slice(3,6).map(x => thrusterRingSvg(x.th, getCmd(x.th), getRpm(x.esc, x.th))).join("");
+
+  const left = THR_MAP
+    .filter(x => x.side === "L")
+    .sort((a,b)=>a.order-b.order)
+    .map(x => thrusterRingSvg(`${x.label} ${x.pos}`, getCmd(x.th), getRpm(x.esc, x.th)))
+    .join("");
+
+  const right = THR_MAP
+    .filter(x => x.side === "R")
+    .sort((a,b)=>a.order-b.order)
+    .map(x => thrusterRingSvg(`${x.label} ${x.pos}`, getCmd(x.th), getRpm(x.escId, x.th)))
+    .join("");
+
   setHTML("motors_left", left);
   setHTML("motors_right", right);
 }
