@@ -17,7 +17,7 @@ function setActionEnabled(node, enabled) {
 function parseFilenameFromDisposition(disposition, fallbackName) {
   if (!disposition) return fallbackName;
   const m = /filename="?([^";]+)"?/i.exec(disposition);
-  return (m && m[1]) ? m[1] : fallbackName;
+  return m?.[1] || fallbackName;
 }
 
 function downloadBlob(blob, filename) {
@@ -35,27 +35,55 @@ function updateBulkActions(totalRows = null) {
   const count = selectedSids.size;
   const hasSelection = count > 0;
 
-  const zip = el("log_zip");
-  if (zip) {
-    zip.textContent = hasSelection ? `DOWNLOAD (${count})` : "DOWNLOAD";
-    zip.href = "#";
-    setActionEnabled(zip, hasSelection);
+  const downloadBtn = el("log_download");
+  if (downloadBtn) {
+    downloadBtn.textContent = hasSelection ? `DOWNLOAD (${count})` : "DOWNLOAD";
+    setActionEnabled(downloadBtn, hasSelection);
   }
 
-  const del = el("log_delete");
-  if (del) {
-    del.textContent = hasSelection ? `DELETE (${count})` : "DELETE";
-    setActionEnabled(del, hasSelection);
+  const deleteBtn = el("log_delete");
+  if (deleteBtn) {
+    deleteBtn.textContent = hasSelection ? `DELETE (${count})` : "DELETE";
+    setActionEnabled(deleteBtn, hasSelection);
   }
 
   const info = el("log_sel_info");
   if (info) {
-    if (typeof totalRows === "number") {
-      info.textContent = `${count}/${totalRows} selezionati`;
-    } else {
-      info.textContent = `${count} selezionati`;
-    }
+    info.textContent = typeof totalRows === "number"
+      ? `${count}/${totalRows} selezionati`
+      : `${count} selezionati`;
   }
+}
+
+function syncSessionListUI(box, arr) {
+  const allSelected = arr.length > 0 && arr.every((x) => selectedSids.has(x.sid));
+
+  const allBtn = el("log_sel_all_btn");
+  if (allBtn) {
+    allBtn.textContent = allSelected ? "DESELEZIONA TUTTI" : "SELEZIONA TUTTI";
+  }
+
+  box.querySelectorAll(".logRow").forEach((row) => {
+    const sid = String(row.dataset.sid || "").trim();
+    const isSelected = selectedSids.has(sid);
+    row.classList.toggle("selected", isSelected);
+
+    const btn = row.querySelector(".logSelBtn");
+    if (btn) {
+      btn.classList.toggle("on", isSelected);
+      btn.textContent = isSelected ? "✓" : "";
+      btn.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      btn.title = isSelected ? "Selezionato" : "Seleziona";
+    }
+  });
+
+  updateBulkActions(arr.length);
+}
+
+function toggleSid(sid) {
+  if (!sid) return;
+  if (selectedSids.has(sid)) selectedSids.delete(sid);
+  else selectedSids.add(sid);
 }
 
 export async function apiPost(url, body) {
@@ -65,7 +93,7 @@ export async function apiPost(url, body) {
     body: body ? JSON.stringify(body) : "{}",
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.err || j?.detail || ("HTTP " + r.status));
+  if (!r.ok) throw new Error(j?.err || j?.detail || (`HTTP ${r.status}`));
   return j;
 }
 
@@ -89,70 +117,64 @@ export async function refreshLogSessions() {
 
   if (!arr.length) {
     selectedSids.clear();
-    box.textContent = "Nessuna sessione salvata.";
+    box.innerHTML = `<div class="mono">Nessuna sessione salvata.</div>`;
     updateBulkActions(0);
     return;
   }
 
-  const allChecked = arr.every((x) => selectedSids.has(x.sid));
   box.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-      <label style="display:inline-flex;align-items:center;gap:6px;">
-        <input id="log_sel_all" type="checkbox" ${allChecked ? "checked" : ""}>
-        <span>Seleziona tutti</span>
-      </label>
+    <div class="logSelHead">
+      <button type="button" id="log_sel_all_btn" class="logActionBtn small">SELEZIONA TUTTI</button>
       <span class="pill mono" id="log_sel_info">${selectedSids.size}/${arr.length} selezionati</span>
     </div>
-    ${arr
-      .map((x) => {
+    <div class="logRows">
+      ${arr.map((x) => {
         const files = [];
         if (x.telemetry) files.push("telemetry");
         if (x.alarms) files.push("alarms");
         if (x.events) files.push("events");
-        const checked = selectedSids.has(x.sid) ? "checked" : "";
         return `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;padding:6px 8px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);">
-            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
-              <input class="log_sel_ck" type="checkbox" data-sid="${x.sid}" ${checked}>
-              <span>${x.sid}</span>
-            </label>
-            <span class="pill mono">${files.length ? files.join(" | ") : "empty"}</span>
+          <div class="logRow" data-sid="${x.sid}">
+            <button type="button" class="logSelBtn" data-sid="${x.sid}" aria-pressed="false"></button>
+            <span class="logSid">${x.sid}</span>
+            <span class="pill mono logKinds">${files.length ? files.join(" | ") : "empty"}</span>
           </div>
         `;
-      })
-      .join("")}
+      }).join("")}
+    </div>
   `;
 
-  const allNode = el("log_sel_all");
-  if (allNode) {
-    allNode.onchange = () => {
-      if (allNode.checked) {
-        arr.forEach((x) => selectedSids.add(x.sid));
-      } else {
+  const allBtn = el("log_sel_all_btn");
+  if (allBtn) {
+    allBtn.onclick = () => {
+      const allSelected = arr.length > 0 && arr.every((x) => selectedSids.has(x.sid));
+      if (allSelected) {
         arr.forEach((x) => selectedSids.delete(x.sid));
+      } else {
+        arr.forEach((x) => selectedSids.add(x.sid));
       }
-      box.querySelectorAll(".log_sel_ck").forEach((ck) => {
-        ck.checked = allNode.checked;
-      });
-      updateBulkActions(arr.length);
+      syncSessionListUI(box, arr);
     };
   }
 
-  box.querySelectorAll(".log_sel_ck").forEach((ck) => {
-    ck.onchange = () => {
-      const sid = String(ck.dataset.sid || "").trim();
-      if (!sid) return;
-      if (ck.checked) selectedSids.add(sid);
-      else selectedSids.delete(sid);
-
-      const allSelected = arr.every((x) => selectedSids.has(x.sid));
-      const allToggle = el("log_sel_all");
-      if (allToggle) allToggle.checked = allSelected;
-      updateBulkActions(arr.length);
+  box.querySelectorAll(".logSelBtn").forEach((btn) => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      const sid = String(btn.dataset.sid || "").trim();
+      toggleSid(sid);
+      syncSessionListUI(box, arr);
     };
   });
 
-  updateBulkActions(arr.length);
+  box.querySelectorAll(".logRow").forEach((row) => {
+    row.onclick = () => {
+      const sid = String(row.dataset.sid || "").trim();
+      toggleSid(sid);
+      syncSessionListUI(box, arr);
+    };
+  });
+
+  syncSessionListUI(box, arr);
 }
 
 async function downloadSelected() {
@@ -171,7 +193,7 @@ async function downloadSelected() {
   });
   if (!r.ok) {
     const j = await r.json().catch(() => ({}));
-    throw new Error(j?.err || j?.detail || ("HTTP " + r.status));
+    throw new Error(j?.err || j?.detail || (`HTTP ${r.status}`));
   }
 
   const blob = await r.blob();
@@ -203,7 +225,7 @@ export function setupLogs() {
   const bStart = el("log_start");
   const bStop = el("log_stop");
   const bDelete = el("log_delete");
-  const bZip = el("log_zip");
+  const bDownload = el("log_download");
 
   if (bStart) {
     bStart.onclick = async () => {
@@ -229,9 +251,8 @@ export function setupLogs() {
     };
   }
 
-  if (bZip) {
-    bZip.onclick = async (ev) => {
-      ev.preventDefault();
+  if (bDownload) {
+    bDownload.onclick = async () => {
       try {
         await downloadSelected();
       } catch (e) {
