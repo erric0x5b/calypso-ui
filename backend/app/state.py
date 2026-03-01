@@ -63,8 +63,8 @@ def init_state(log_dir: str):
         os.makedirs(os.path.dirname(pth), exist_ok=True)
         open(pth, "a", encoding="utf-8").close()
     state["logging"] = {
-        "enabled": True,
-        "sid": sid,
+        "enabled": False,
+        "sid": None,
         "telemetry_path": telemetry_path,
         "alarms_path": alarms_path,
         "events_path": events_path,
@@ -132,6 +132,15 @@ def update_state(parsed: dict):
 
     # optional: save kv as hb
     state["nodes"][src].update({"hb": kv})
+
+    # Keep convenient per-pod connectivity flags in sync for UI.
+    if src in state["pods"]:
+        state["pods"][src]["online"] = True
+        if "BusConn" in kv:
+            try:
+                state["pods"][src]["bus_conn"] = int(kv["BusConn"])
+            except Exception:
+                pass
 
     if msg == "ENV" and src in state["pods"]:
         state["pods"][src].update(kv)

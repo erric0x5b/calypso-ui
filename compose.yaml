@@ -9,7 +9,7 @@ services:
       CALYPSO_UDP_RX_PORT: "14590"
       CALYPSO_UDP_TX_PORT: "14591"
       CALYPSO_LOG_DIR: "/data/deepex_logs"
-      CALYPSO_UDP_TX_HOST: "udp-sim"
+      CALYPSO_UDP_TX_HOST: "192.168.2.3"
       MAVLINK_HOST: "127.0.0.1"
       MAVLINK_PORT: "14550"
     ports:

@@ -4,11 +4,35 @@
   "docker": "ghcr.io/erric0x5b/calypso-ui",
   "tag": "latest",
   "permissions": {
-    "ExposedPorts": { "80/tcp": {} },
+    "ExposedPorts": {
+      "80/tcp": {},
+      "14590/udp": {},
+      "14591/udp": {}
+    },
     "HostConfig": {
-      "ExtraHosts": ["host.docker.internal:host-gateway"],
-      "PortBindings": { "80/tcp": [ { "HostPort": "" } ] },
-      "Binds": [ "/usr/blueos/extensions/it.deepex.calypso-ui:/data" ]
+      "ExtraHosts": [
+        "host.docker.internal:host-gateway"
+      ],
+      "PortBindings": {
+        "80/tcp": [
+          {
+            "HostPort": ""
+          }
+        ],
+        "14590/udp": [
+          {
+            "HostPort": "14590"
+          }
+        ],
+        "14591/udp": [
+          {
+            "HostPort": "14591"
+          }
+        ]
+      },
+      "Binds": [
+        "/usr/blueos/extensions/it.deepex.calypso-ui:/data"
+      ]
     }
   }
 }

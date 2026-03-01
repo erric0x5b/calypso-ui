@@ -2,6 +2,7 @@ import asyncio
 import csv
 from curses.ascii import alt
 import io
+import logging as py_logging
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from backend.app.sonar_ping360 import (
     save_cfg as ping360_save_cfg,
     ping360_task,
 )
+from backend.app.udp_rx import UdpRxStats, start_udp_listener
 
 # state moved to backend.app.state
 from backend.app.state import (
@@ -73,7 +75,10 @@ UI_DIR = os.path.join(BASE_DIR, "static")     # /app/backend/app/static (contain
 # ----------------------------
 # App
 # ----------------------------
+py_logging.basicConfig(level=py_logging.INFO)
+
 app = FastAPI(title="calypso-ui backend")
+udp_stats = UdpRxStats()
 
 # Serve UI under /ui (safe with /api routes)
 app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
@@ -93,7 +98,7 @@ def register_service():
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.5",
+        "version": "0.4.6",
         "new_page": True,
         "avoid_iframes": True,
         "works_in_relative_paths": True,
@@ -175,41 +180,32 @@ udp_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 # ----------------------------
 # UDP RX Server
 # ----------------------------
-class UDPServerProtocol(asyncio.DatagramProtocol):
-    def __init__(self):
-        self.transport = None
+def handle_udp_datagram(data: bytes, addr):
+    try:
+        state["counters"]["udp_rx"] += 1
+        line = data.decode("ascii", errors="ignore")
+    except Exception:
+        return
 
-    def connection_made(self, transport):
-        self.transport = transport
-        sock = transport.get_extra_info("socket")
-        if sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1_048_576)
+    parsed, err = parse_nmea_line(line)
+    if err:
+        state["counters"]["parse_err"] += 1
+        if err == "checksum":
+            state["counters"]["cksum_err"] += 1
+        return
 
-    def datagram_received(self, data, addr):
-        try:
-            state["counters"]["udp_rx"] += 1
-            line = data.decode("ascii", errors="ignore")
-        except Exception:
-            return
+    latest["last_line"] = parsed["raw"]
+    append_telemetry_csv(parsed)
+    update_state(parsed)
 
-        parsed, err = parse_nmea_line(line)
-        if err:
-            state["counters"]["parse_err"] += 1
-            if err == "checksum":
-                state["counters"]["cksum_err"] += 1
-            return
+    asyncio.create_task(ws_broadcast({
+        "type": "udp",
+        "src": parsed["src"],
+        "msg": parsed["msg"],
+        "ts_ms": parsed["ts_ms"],
+        "raw": parsed["raw"],
+    }))
 
-        latest["last_line"] = parsed["raw"]
-        append_telemetry_csv(parsed)
-        update_state(parsed)
-
-        asyncio.create_task(ws_broadcast({
-            "type": "udp",
-            "src": parsed["src"],
-            "msg": parsed["msg"],
-            "ts_ms": parsed["ts_ms"],
-            "raw": parsed["raw"],
-        }))
 
 async def offline_watchdog():
     while True:
@@ -221,6 +217,8 @@ async def offline_watchdog():
             dt = (state["last_update_ms"] - last_hb) & 0xFFFFFFFF if state["last_update_ms"] is not None else 0
             if dt > OFFLINE_MS and info.get("online"):
                 info["online"] = False
+                if node in state.get("pods", {}):
+                    state["pods"][node]["online"] = False
                 alarm = {
                     "ts_ms": state["last_update_ms"],
                     "src": "SFC",
@@ -242,10 +240,7 @@ async def startup():
     loop = asyncio.get_running_loop()
 
     # UDP listener
-    await loop.create_datagram_endpoint(
-        lambda: UDPServerProtocol(),
-        local_addr=("0.0.0.0", UDP_RX_PORT),
-    )
+    await start_udp_listener(udp_stats, on_datagram=handle_udp_datagram)
 
     # background tasks
     asyncio.create_task(offline_watchdog())
@@ -274,7 +269,24 @@ async def startup():
 # ----------------------------
 @app.get("/api/state")
 def api_state():
-    return state
+    return {
+        **state,
+        "udp": {
+            "listener_ok": udp_stats.listener_ok,
+            "bind": udp_stats.listener_bind,
+            "port": udp_stats.listener_port,
+            "error": udp_stats.listener_error,
+            "rx_total": udp_stats.rx_total,
+            "last_ts_ms": udp_stats.rx_last_ts_ms,
+            "last_from": udp_stats.rx_last_from,
+            "last_len": udp_stats.rx_last_len,
+            "last_msg": udp_stats.rx_last_msg,
+            "last_src": udp_stats.rx_last_src,
+            "last_dst": udp_stats.rx_last_dst,
+            "last_ck_ok": udp_stats.rx_last_ck_ok,
+            "last_prefix": udp_stats.rx_last_prefix,
+        },
+    }
 
 @app.get("/api/health")
 def api_health():
@@ -406,6 +418,36 @@ def api_log_zip(sid: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@app.post("/api/log/delete")
+def api_log_delete(payload: dict = Body(...)):
+    sid = str(payload.get("sid", "")).strip()
+    if not re.fullmatch(r"\d{8}_\d{6}", sid):
+        return JSONResponse({"ok": False, "err": "bad sid"}, status_code=400)
+
+    sessions = list_sessions(LOG_DIR)
+    if sid not in sessions:
+        return JSONResponse({"ok": False, "err": "session not found"}, status_code=404)
+
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    if cur.get("enabled") and cur.get("sid") == sid:
+        return JSONResponse({"ok": False, "err": "stop logging before deleting current session"}, status_code=409)
+
+    removed = []
+    files = sessions[sid]
+    for kind in ("telemetry", "alarms", "events"):
+        p = files.get(kind)
+        if p and os.path.isfile(p):
+            try:
+                os.remove(p)
+                removed.append(os.path.basename(p))
+            except Exception:
+                pass
+
+    if (not cur.get("enabled")) and cur.get("sid") == sid:
+        state["logging"] = {"enabled": False, "sid": None}
+
+    return {"ok": True, "sid": sid, "removed": removed}
 
 @app.get("/api/log/status")
 def api_log_status():
