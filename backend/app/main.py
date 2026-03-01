@@ -359,6 +359,7 @@ def api_set_lights_cfg(cfg: dict = Body(...)):
     save_lights_cfg(out)
     return {"ok": True}
 
+SID_RE = re.compile(r"^\d{8}_\d{6}$")
 SESSION_RE = re.compile(r"^(telemetry|alarms|events)_(\d{8}_\d{6})\.(csv|jsonl)$")
 
 def list_sessions(log_dir: str):
@@ -375,6 +376,56 @@ def list_sessions(log_dir: str):
         return {}
     return dict(sorted(sessions.items(), key=lambda kv: kv[0], reverse=True))
 
+def parse_sid_list(payload: dict):
+    raw = payload.get("sids")
+    if not isinstance(raw, list):
+        return None, "sids must be an array"
+
+    out = []
+    seen = set()
+    for it in raw:
+        sid = str(it or "").strip()
+        if not SID_RE.fullmatch(sid):
+            return None, "bad sid"
+        if sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+
+    if not out:
+        return None, "empty sids"
+    return out, None
+
+def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: bool):
+    created_utc = datetime.utcnow().isoformat() + "Z"
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        if multi:
+            manifest = {"created_utc": created_utc, "sessions": []}
+            for sid in sids:
+                files = sessions[sid]
+                files_manifest = {}
+                for kind in ("telemetry", "alarms", "events"):
+                    p = files.get(kind)
+                    if p and os.path.isfile(p):
+                        name = os.path.basename(p)
+                        z.write(p, arcname=f"{sid}/{name}")
+                        files_manifest[kind] = name
+                one_manifest = {"sid": sid, "created_utc": created_utc, "files": files_manifest}
+                z.writestr(f"{sid}/manifest_{sid}.json", json.dumps(one_manifest, indent=2))
+                manifest["sessions"].append(one_manifest)
+            z.writestr("manifest_multi.json", json.dumps(manifest, indent=2))
+        else:
+            sid = sids[0]
+            files = sessions[sid]
+            files_manifest = {}
+            for kind in ("telemetry", "alarms", "events"):
+                p = files.get(kind)
+                if p and os.path.isfile(p):
+                    name = os.path.basename(p)
+                    z.write(p, arcname=name)
+                    files_manifest[kind] = name
+            manifest = {"sid": sid, "created_utc": created_utc, "files": files_manifest}
+            z.writestr(f"manifest_{sid}.json", json.dumps(manifest, indent=2))
+
 @app.get("/api/log/sessions")
 def api_log_sessions():
     sessions = list_sessions(LOG_DIR)
@@ -390,26 +441,15 @@ def api_log_sessions():
 
 @app.get("/api/log/zip")
 def api_log_zip(sid: str):
-    if not re.fullmatch(r"\d{8}_\d{6}", sid):
+    if not SID_RE.fullmatch(sid):
         raise HTTPException(status_code=400, detail="bad sid")
 
     sessions = list_sessions(LOG_DIR)
     if sid not in sessions:
         raise HTTPException(status_code=404, detail="session not found")
 
-    files = sessions[sid]
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for kind in ("telemetry", "alarms", "events"):
-            p = files.get(kind)
-            if p and os.path.isfile(p):
-                z.write(p, arcname=os.path.basename(p))
-        manifest = {
-            "sid": sid,
-            "created_utc": datetime.utcnow().isoformat() + "Z",
-            "files": {k: os.path.basename(v) for k, v in files.items()},
-        }
-        z.writestr(f"manifest_{sid}.json", json.dumps(manifest, indent=2))
+    build_session_zip(buf, sessions, [sid], multi=False)
 
     buf.seek(0)
     filename = f"deepex_logs_{sid}.zip"
@@ -419,10 +459,33 @@ def api_log_zip(sid: str):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+@app.post("/api/log/zip_many")
+def api_log_zip_many(payload: dict = Body(...)):
+    sids, err = parse_sid_list(payload)
+    if err:
+        return JSONResponse({"ok": False, "err": err}, status_code=400)
+
+    sessions = list_sessions(LOG_DIR)
+    missing = [sid for sid in sids if sid not in sessions]
+    if missing:
+        return JSONResponse({"ok": False, "err": "session not found", "missing": missing}, status_code=404)
+
+    buf = io.BytesIO()
+    build_session_zip(buf, sessions, sids, multi=True)
+    buf.seek(0)
+
+    now_tag = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"deepex_logs_multi_{now_tag}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 @app.post("/api/log/delete")
 def api_log_delete(payload: dict = Body(...)):
     sid = str(payload.get("sid", "")).strip()
-    if not re.fullmatch(r"\d{8}_\d{6}", sid):
+    if not SID_RE.fullmatch(sid):
         return JSONResponse({"ok": False, "err": "bad sid"}, status_code=400)
 
     sessions = list_sessions(LOG_DIR)
@@ -448,6 +511,43 @@ def api_log_delete(payload: dict = Body(...)):
         state["logging"] = {"enabled": False, "sid": None}
 
     return {"ok": True, "sid": sid, "removed": removed}
+
+@app.post("/api/log/delete_many")
+def api_log_delete_many(payload: dict = Body(...)):
+    sids, err = parse_sid_list(payload)
+    if err:
+        return JSONResponse({"ok": False, "err": err}, status_code=400)
+
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    if cur.get("enabled") and cur.get("sid") in sids:
+        return JSONResponse({"ok": False, "err": "stop logging before deleting current session"}, status_code=409)
+
+    sessions = list_sessions(LOG_DIR)
+    missing = [sid for sid in sids if sid not in sessions]
+
+    deleted = []
+    removed_by_sid = {}
+    for sid in sids:
+        files = sessions.get(sid)
+        if not files:
+            continue
+
+        removed = []
+        for kind in ("telemetry", "alarms", "events"):
+            p = files.get(kind)
+            if p and os.path.isfile(p):
+                try:
+                    os.remove(p)
+                    removed.append(os.path.basename(p))
+                except Exception:
+                    pass
+        deleted.append(sid)
+        removed_by_sid[sid] = removed
+
+        if (not cur.get("enabled")) and cur.get("sid") == sid:
+            state["logging"] = {"enabled": False, "sid": None}
+
+    return {"ok": True, "deleted": deleted, "missing": missing, "removed": removed_by_sid}
 
 @app.get("/api/log/status")
 def api_log_status():
