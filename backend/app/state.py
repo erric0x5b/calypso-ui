@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 from typing import Tuple, Dict, Any
 
@@ -34,7 +35,14 @@ def _default_logging(ctx_sid: str = None):
 
 state.setdefault("logging", {"enabled": False, "sid": None})
 state.setdefault("att", {"roll_deg": None, "pitch_deg": None, "yaw_deg": None})
-state.setdefault("nav", {"depth_m": None, "heading_deg": None, "alt_m": None})
+state.setdefault("nav", {
+    "depth_m": None,
+    "heading_deg": None,
+    "alt_m": None,
+    "lat_deg": None,
+    "lon_deg": None,
+    "mission_time_s": None,
+})
 state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
 
 # simple command id generator
@@ -107,6 +115,20 @@ def append_telemetry_csv(p: dict):
             f.write(f'{p["ts_ms"]},{p["src"]},{p["msg"]},"{raw_escaped}"\n')
     except Exception:
         pass
+
+
+def append_event_jsonl(evt: dict) -> bool:
+    """Append one mission event (JSONL) to events_path when logging is enabled."""
+    if not state.get("logging", {}).get("enabled"):
+        return False
+    if not events_path:
+        return False
+    try:
+        with open(events_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(evt, ensure_ascii=False) + "\n")
+        return True
+    except Exception:
+        return False
 
 
 def update_state(parsed: dict):

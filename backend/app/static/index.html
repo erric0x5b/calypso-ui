@@ -5,16 +5,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=2">
+  <link rel="stylesheet" href="app.css?v=3">
 </head>
 
 <body>
   <h2>calypso-ui <span id="status" class="pill">connecting…</span></h2>
 
   <div class="topbar">
-    <span class="pill" id="main_mode">MISSION</span>
+    <span class="pill" id="main_mode">VEHICLE</span>
     <div class="tabs">
-      <button class="tab active" data-tab="mission">MISSION</button>
+      <button class="tab active" data-tab="vehicle">VEHICLE</button>
+      <button class="tab" data-tab="mission">MISSION</button>
       <button class="tab" data-tab="video">VIDEO</button>
       <button class="tab" data-tab="sonar">SONAR</button>
     </div>
@@ -66,6 +67,45 @@
           <div class="cardBody">
             <div id="main_power_badges"></div>
             <div id="main_scada" style="margin-top:10px;"></div>
+          </div>
+        </div>
+      </div>
+      <div id="missionTabWrap" class="hidden">
+        <div class="card">
+          <div class="cardHead">
+            <div class="cardTitle">Mission</div>
+            <div class="cardActions">
+              <span class="pill mono" id="mission_time_pill">--:--:--</span>
+            </div>
+          </div>
+          <div class="cardBody missionTabBody">
+            <div class="missionGrid2">
+              <div class="missionCol">
+                <div class="missionSectionTitle">Dettagli Missione (Manifest)</div>
+                <div id="mission_manifest" class="mono">-</div>
+              </div>
+              <div class="missionCol">
+                <div class="missionSectionTitle">Anagrafica Missione</div>
+                <div class="missionMetaGrid">
+                  <input id="mission_meta_title" type="text" placeholder="Titolo missione" />
+                  <input id="mission_meta_place" type="text" placeholder="Luogo" />
+                  <input id="mission_meta_objective" type="text" placeholder="Oggetto missione" />
+                  <input id="mission_meta_operator" type="text" placeholder="Operatore" />
+                  <input id="mission_meta_date" type="date" />
+                  <button id="mission_meta_save">SAVE META</button>
+                </div>
+                <div class="mono" id="mission_meta_ack" style="margin-top:8px;">-</div>
+
+                <div class="missionSectionTitle">Aggiungi Evento Manuale</div>
+                <div class="missionEventRow">
+                  <input id="mission_event_text" type="text" placeholder="Inserisci nota missione..." />
+                  <button id="mission_event_add">ADD EVENT</button>
+                </div>
+                <div class="mono" id="mission_event_ack" style="margin-top:8px;">-</div>
+              </div>
+            </div>
+            <div class="missionSectionTitle" style="margin-top:12px;">Ultimi Eventi Registrati</div>
+            <div id="mission_events" class="mono">-</div>
           </div>
         </div>
       </div>
@@ -242,7 +282,7 @@
   }
   </script>
   <script type="module" src="three_boot.js?v=3"></script>
-  <script type="module" src="js/main.js?v=2"></script>
+  <script type="module" src="js/main.js?v=3"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 

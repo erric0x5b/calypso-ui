@@ -9,6 +9,7 @@ import re
 import socket
 import threading
 import zipfile
+from collections import deque
 from datetime import datetime
 from typing import Optional, Set
 
@@ -39,6 +40,7 @@ from backend.app.state import (
     set_session_paths,
     make_sid,
     append_telemetry_csv,
+    append_event_jsonl,
 )
 
 # ----------------------------
@@ -115,14 +117,6 @@ def docs_json():
 # ----------------------------
 init_state(LOG_DIR)
 app_logging.init_logging(LOG_DIR, state)
-
-log_start_new_session = app_logging.log_start_new_session
-log_stop_session = app_logging.log_stop_session
-log_write_telemetry_row = app_logging.log_write_telemetry_row
-log_write_alarm = app_logging.log_write_alarm
-log_write_event = app_logging.log_write_event
-log_is_on = app_logging.log_is_on
-log_status_dict = app_logging.log_status_dict
 
 # ----------------------------
 # WebSocket clients
@@ -395,6 +389,73 @@ def parse_sid_list(payload: dict):
         return None, "empty sids"
     return out, None
 
+def sid_to_dt(sid: str) -> Optional[datetime]:
+    try:
+        return datetime.strptime(sid, "%Y%m%d_%H%M%S")
+    except Exception:
+        return None
+
+def resolve_sid(requested_sid: str | None, sessions: dict, cur_sid: str | None) -> str | None:
+    sid = (requested_sid or "").strip()
+    if sid:
+        if not SID_RE.fullmatch(sid):
+            return None
+        return sid
+    if cur_sid and SID_RE.fullmatch(str(cur_sid)):
+        return str(cur_sid)
+    if sessions:
+        return next(iter(sessions.keys()))
+    return None
+
+def mission_meta_path(sid: str) -> str:
+    return os.path.join(LOG_DIR, f"manifest_{sid}.json")
+
+def sanitize_mission_meta(raw: dict, sid: str) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+
+    def clean(key: str, max_len: int) -> str:
+        return str(raw.get(key, "")).strip()[:max_len]
+
+    out = {
+        "title": clean("title", 120),
+        "place": clean("place", 120),
+        "objective": clean("objective", 240),
+        "operator": clean("operator", 120),
+        "date": clean("date", 16),
+    }
+
+    if out["date"] and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["date"]):
+        out["date"] = ""
+
+    if not out["date"]:
+        dt = sid_to_dt(sid)
+        if dt:
+            out["date"] = dt.strftime("%Y-%m-%d")
+    return out
+
+def load_mission_meta(sid: str) -> dict:
+    p = mission_meta_path(sid)
+    if not os.path.isfile(p):
+        return sanitize_mission_meta({}, sid)
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("mission"), dict):
+            data = data["mission"]
+        return sanitize_mission_meta(data, sid)
+    except Exception:
+        return sanitize_mission_meta({}, sid)
+
+def save_mission_meta(sid: str, mission: dict) -> dict:
+    safe = sanitize_mission_meta(mission, sid)
+    p = mission_meta_path(sid)
+    tmp = p + ".tmp"
+    payload = {"sid": sid, "mission": safe}
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, p)
+    return safe
+
 def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: bool):
     created_utc = datetime.utcnow().isoformat() + "Z"
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -409,7 +470,12 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
                         name = os.path.basename(p)
                         z.write(p, arcname=f"{sid}/{name}")
                         files_manifest[kind] = name
-                one_manifest = {"sid": sid, "created_utc": created_utc, "files": files_manifest}
+                one_manifest = {
+                    "sid": sid,
+                    "created_utc": created_utc,
+                    "files": files_manifest,
+                    "mission": load_mission_meta(sid),
+                }
                 z.writestr(f"{sid}/manifest_{sid}.json", json.dumps(one_manifest, indent=2))
                 manifest["sessions"].append(one_manifest)
             z.writestr("manifest_multi.json", json.dumps(manifest, indent=2))
@@ -423,7 +489,12 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
                     name = os.path.basename(p)
                     z.write(p, arcname=name)
                     files_manifest[kind] = name
-            manifest = {"sid": sid, "created_utc": created_utc, "files": files_manifest}
+            manifest = {
+                "sid": sid,
+                "created_utc": created_utc,
+                "files": files_manifest,
+                "mission": load_mission_meta(sid),
+            }
             z.writestr(f"manifest_{sid}.json", json.dumps(manifest, indent=2))
 
 @app.get("/api/log/sessions")
@@ -549,6 +620,104 @@ def api_log_delete_many(payload: dict = Body(...)):
 
     return {"ok": True, "deleted": deleted, "missing": missing, "removed": removed_by_sid}
 
+@app.get("/api/log/manifest")
+def api_log_manifest(sid: str | None = None):
+    sessions = list_sessions(LOG_DIR)
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    chosen_sid = resolve_sid(sid, sessions, cur.get("sid"))
+    if not chosen_sid:
+        return JSONResponse({"ok": False, "err": "sid not available"}, status_code=404)
+    if chosen_sid not in sessions:
+        return JSONResponse({"ok": False, "err": "session not found"}, status_code=404)
+
+    files = sessions[chosen_sid]
+    sid_dt = sid_to_dt(chosen_sid)
+    manifest = {
+        "sid": chosen_sid,
+        "created_utc": (sid_dt.isoformat() + "Z") if sid_dt else None,
+        "files": {},
+        "mission": load_mission_meta(chosen_sid),
+    }
+    sizes = {}
+    for kind in ("telemetry", "alarms", "events"):
+        p = files.get(kind)
+        if p and os.path.isfile(p):
+            name = os.path.basename(p)
+            manifest["files"][kind] = name
+            try:
+                sizes[kind] = os.path.getsize(p)
+            except Exception:
+                sizes[kind] = None
+
+    now = datetime.now()
+    elapsed_sec = None
+    if sid_dt:
+        elapsed_sec = max(0, int((now - sid_dt).total_seconds()))
+
+    return {
+        "ok": True,
+        "manifest": manifest,
+        "sizes": sizes,
+        "logging_enabled": bool(cur.get("enabled")),
+        "current_sid": cur.get("sid"),
+        "is_current": str(cur.get("sid") or "") == chosen_sid,
+        "elapsed_sec": elapsed_sec,
+    }
+
+@app.post("/api/log/manifest_meta")
+def api_log_manifest_meta(payload: dict = Body(...)):
+    sessions = list_sessions(LOG_DIR)
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    req_sid = str(payload.get("sid", "")).strip() or None
+    chosen_sid = resolve_sid(req_sid, sessions, cur.get("sid"))
+    if not chosen_sid:
+        return JSONResponse({"ok": False, "err": "sid not available"}, status_code=404)
+    if chosen_sid not in sessions:
+        return JSONResponse({"ok": False, "err": "session not found"}, status_code=404)
+
+    mission = payload.get("mission")
+    if mission is None:
+        # fallback: support flat payload keys
+        mission = {k: payload.get(k) for k in ("title", "place", "objective", "operator", "date")}
+
+    try:
+        saved = save_mission_meta(chosen_sid, mission)
+    except Exception:
+        return JSONResponse({"ok": False, "err": "failed to save mission metadata"}, status_code=500)
+
+    return {"ok": True, "sid": chosen_sid, "mission": saved}
+
+@app.get("/api/log/events_tail")
+def api_log_events_tail(sid: str | None = None, limit: int = 20):
+    limit = max(1, min(int(limit or 20), 200))
+    sessions = list_sessions(LOG_DIR)
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    chosen_sid = resolve_sid(sid, sessions, cur.get("sid"))
+    if not chosen_sid:
+        return {"ok": True, "sid": None, "events": []}
+    if chosen_sid not in sessions:
+        return JSONResponse({"ok": False, "err": "session not found"}, status_code=404)
+
+    events_file = sessions[chosen_sid].get("events")
+    if not events_file or not os.path.isfile(events_file):
+        return {"ok": True, "sid": chosen_sid, "events": []}
+
+    tail = deque(maxlen=limit)
+    with open(events_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tail.append(line)
+
+    out = []
+    for line in reversed(tail):
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            out.append({"raw": line})
+
+    return {"ok": True, "sid": chosen_sid, "events": out}
+
 @app.get("/api/log/status")
 def api_log_status():
     return state.get("logging", {"enabled": False, "sid": None})
@@ -568,7 +737,7 @@ def api_log_stop():
 
 @app.post("/api/log/event")
 def api_log_event(payload: dict = Body(...)):
-    if not log_is_on():
+    if not state.get("logging", {}).get("enabled"):
         return JSONResponse({"ok": False, "err": "logging disabled"}, status_code=400)
 
     typ = str(payload.get("type", "NOTE")).upper()
@@ -576,17 +745,22 @@ def api_log_event(payload: dict = Body(...)):
     if not text:
         return JSONResponse({"ok": False, "err": "text empty"}, status_code=400)
 
-    att = state.get("att") or {}
+    nav = state.get("nav") or {}
     evt = {
         "ts_ms": int(state.get("last_update_ms") or 0),
-        "mission_time": att.get("mission_time"),
-        "depth": att.get("depth_m"),
-        "heading": att.get("heading_deg"),
+        "mission_time": nav.get("mission_time_s"),
+        "depth": nav.get("depth_m"),
+        "heading": nav.get("heading_deg"),
+        "lat": nav.get("lat_deg"),
+        "lon": nav.get("lon_deg"),
+        "alt_m": nav.get("alt_m"),
         "src": "SFC",
         "type": typ,
         "text": text,
     }
-    log_write_event(evt)
+    ok = append_event_jsonl(evt)
+    if not ok:
+        return JSONResponse({"ok": False, "err": "failed to write event log"}, status_code=500)
     return {"ok": True}
 
 @app.get("/api/sonar/ping360/config")
@@ -614,6 +788,10 @@ async def mavlink_reader():
             state["mav"]["msgs"] += 1
 
             mt = msg.get_type()
+            t_boot = getattr(msg, "time_boot_ms", None)
+            if t_boot is not None:
+                state["nav"]["mission_time_s"] = float(t_boot) / 1000.0
+
             if mt == "ATTITUDE":
                 state["att"]["roll_deg"]  = msg.roll  * 57.295779513
                 state["att"]["pitch_deg"] = msg.pitch * 57.295779513
@@ -621,6 +799,20 @@ async def mavlink_reader():
             elif mt == "VFR_HUD":
                 state["nav"]["heading_deg"] = getattr(msg, "heading", None)
                 state["nav"]["alt_m"] = getattr(msg, "alt", None)
+            elif mt == "GLOBAL_POSITION_INT":
+                lat = getattr(msg, "lat", None)
+                lon = getattr(msg, "lon", None)
+                hdg = getattr(msg, "hdg", None)
+                rel_alt = getattr(msg, "relative_alt", None)
+
+                if lat is not None:
+                    state["nav"]["lat_deg"] = float(lat) / 1e7
+                if lon is not None:
+                    state["nav"]["lon_deg"] = float(lon) / 1e7
+                if hdg is not None and int(hdg) != 65535:
+                    state["nav"]["heading_deg"] = float(hdg) / 100.0
+                if rel_alt is not None:
+                    state["nav"]["alt_m"] = float(rel_alt) / 1000.0
 
     await asyncio.to_thread(_run)
 
@@ -634,16 +826,17 @@ async def mavlink_ws_loop():
     PWM_MAX = 1900
 
     def pwm_to_pct(pwm: int) -> float:
-        if pwm < PWM_MIN: pwm = PWM_MIN
-        if pwm > PWM_MAX: pwm = PWM_MAX
+        if pwm < PWM_MIN:
+            pwm = PWM_MIN
+        if pwm > PWM_MAX:
+            pwm = PWM_MAX
         if pwm >= PWM_TRIM:
             return (pwm - PWM_TRIM) / (PWM_MAX - PWM_TRIM) * 100.0
-        else:
-            return - (PWM_TRIM - pwm) / (PWM_TRIM - PWM_MIN) * 100.0
+        return - (PWM_TRIM - pwm) / (PWM_TRIM - PWM_MIN) * 100.0
 
     RAD2DEG = 57.295779513
 
-    # (opzionale) throttle broadcast thr per non spammare la UI
+    # throttle broadcast thr per non spammare la UI
     last_thr_push = 0.0
     THR_PUSH_MIN_DT = 0.05  # 50ms => max 20Hz
 
@@ -664,9 +857,13 @@ async def mavlink_ws_loop():
                     if not mtype:
                         continue
 
-                    # --- Attitude ---
+                    t_boot = msg.get("time_boot_ms")
+                    if t_boot is not None:
+                        state.setdefault("nav", {})
+                        state["nav"]["mission_time_s"] = float(t_boot) / 1000.0
+
                     if mtype == "ATTITUDE":
-                        # ATTITUDE è in radianti
+                        # ATTITUDE e in radianti
                         roll = msg.get("roll")
                         pitch = msg.get("pitch")
                         yaw = msg.get("yaw")
@@ -675,22 +872,45 @@ async def mavlink_ws_loop():
                             "pitch_deg": float(pitch) * RAD2DEG if pitch is not None else None,
                             "yaw_deg": float(yaw) * RAD2DEG if yaw is not None else None,
                         }
-
-                    # --- Heading/Alt (opzionale) ---
                     elif mtype == "VFR_HUD":
+                        hdg = msg.get("heading")
                         alt = msg.get("alt")
                         state.setdefault("nav", {})
+                        if hdg is not None:
+                            state["nav"]["heading_deg"] = float(hdg)
                         if alt is not None:
                             state["nav"]["alt_m"] = float(alt)
-
                     elif mtype == "GLOBAL_POSITION_INT":
-                        # hdg in centi-gradi? su ArduPilot hdg è in centi-deg (0..35999)
+                        # hdg in centi-deg (0..35999)
                         hdg = msg.get("hdg")
+                        lat = msg.get("lat")
+                        lon = msg.get("lon")
+                        rel_alt = msg.get("relative_alt")
                         if hdg is not None:
                             state.setdefault("nav", {})
                             state["nav"]["heading_deg"] = float(hdg) / 100.0
-
-                    # --- Thruster outputs (SERVO) ---
+                        if lat is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["lat_deg"] = float(lat) / 1e7
+                        if lon is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["lon_deg"] = float(lon) / 1e7
+                        if rel_alt is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["alt_m"] = float(rel_alt) / 1000.0
+                    elif mtype == "GPS_RAW_INT":
+                        lat = msg.get("lat")
+                        lon = msg.get("lon")
+                        alt = msg.get("alt")
+                        if lat is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["lat_deg"] = float(lat) / 1e7
+                        if lon is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["lon_deg"] = float(lon) / 1e7
+                        if alt is not None:
+                            state.setdefault("nav", {})
+                            state["nav"]["alt_m"] = float(alt) / 1000.0
                     elif mtype == "SERVO_OUTPUT_RAW":
                         outs = [
                             msg.get("servo1_raw"),
@@ -716,21 +936,13 @@ async def mavlink_ws_loop():
                             state["thr"][th_key]["PWM"] = pwm_i
                             state["thr"][th_key]["CmdPct"] = round(pct, 1)
 
-                        # 1 SOLO broadcast per messaggio (throttled)
                         now = asyncio.get_running_loop().time()
                         if (now - last_thr_push) >= THR_PUSH_MIN_DT:
                             last_thr_push = now
                             await ws_broadcast({
                                 "type": "thr",
-                                "thr": {
-                                    k: state["thr"].get(k, {}) for k in ("TH1","TH2","TH3","TH4","TH5","TH6")
-                                }
+                                "thr": {k: state["thr"].get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
                             })
-
-                    # Se vuoi tenere update generico, fallo SOLO ogni tanto o solo per alcuni tipi
-                    # else:
-                    #     asyncio.create_task(ws_broadcast({"type": "update", "src": "MAV", "msg": mtype}))
-
         except Exception as e:
             print(f"[mavlink] error: {e}")
             await asyncio.sleep(2.0)

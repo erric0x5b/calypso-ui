@@ -7,6 +7,10 @@ import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
 let snapshot = null;
+let missionRefreshTimer = null;
+let missionTabWired = false;
+let missionCurrentSid = null;
+let missionMetaAppliedSid = null;
 
 const ALARM_GUIDE_BY_ID = {
     9001: {
@@ -131,6 +135,204 @@ function buildMotorErrorsHtml(state, escIds) {
     </div>`;
 }
 
+function escapeHtml(s) {
+    return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function sidToDate(sid) {
+    const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(String(sid || ""));
+    if (!m) return null;
+    const [_, y, mo, d, h, mi, se] = m;
+    return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(se));
+}
+
+function fmtDuration(totalSec) {
+    const sec = Math.max(0, Number(totalSec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function fmtBytes(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x) || x < 0) return "-";
+    if (x < 1024) return `${x} B`;
+    if (x < 1024 * 1024) return `${(x / 1024).toFixed(1)} KB`;
+    return `${(x / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function missionElapsedSecFromSid(sid) {
+    const dt = sidToDate(sid);
+    if (!dt) return null;
+    return Math.max(0, Math.floor((Date.now() - dt.getTime()) / 1000));
+}
+
+function formatMissionEventLine(evt) {
+    const ts = evt?.ts_ms != null ? `ts:${evt.ts_ms}` : "ts:-";
+    const mt = evt?.mission_time != null ? ` mission:${evt.mission_time}` : "";
+    const lat = evt?.lat != null ? ` lat:${Number(evt.lat).toFixed(6)}` : "";
+    const lon = evt?.lon != null ? ` lon:${Number(evt.lon).toFixed(6)}` : "";
+    const hdg = evt?.heading != null ? ` hdg:${Number(evt.heading).toFixed(1)}` : "";
+    const dep = evt?.depth != null ? ` depth:${Number(evt.depth).toFixed(2)}` : "";
+    const typ = escapeHtml(evt?.type || "EVENT");
+    const text = escapeHtml(evt?.text || evt?.raw || "-");
+    return `<div><b>${typ}</b> ${text} <span style="opacity:.75;">(${ts}${mt}${lat}${lon}${hdg}${dep})</span></div>`;
+}
+
+function missionMetaFormNodes() {
+    return {
+        title: document.getElementById("mission_meta_title"),
+        place: document.getElementById("mission_meta_place"),
+        objective: document.getElementById("mission_meta_objective"),
+        operator: document.getElementById("mission_meta_operator"),
+        date: document.getElementById("mission_meta_date"),
+    };
+}
+
+function missionMetaReadForm() {
+    const f = missionMetaFormNodes();
+    return {
+        title: String(f.title?.value || "").trim(),
+        place: String(f.place?.value || "").trim(),
+        objective: String(f.objective?.value || "").trim(),
+        operator: String(f.operator?.value || "").trim(),
+        date: String(f.date?.value || "").trim(),
+    };
+}
+
+function missionMetaWriteForm(meta, sid) {
+    const f = missionMetaFormNodes();
+    const activeId = document.activeElement?.id || "";
+    const editing = activeId.startsWith("mission_meta_");
+    if (editing && missionMetaAppliedSid === sid) return;
+
+    const m = meta || {};
+    if (f.title) f.title.value = String(m.title || "");
+    if (f.place) f.place.value = String(m.place || "");
+    if (f.objective) f.objective.value = String(m.objective || "");
+    if (f.operator) f.operator.value = String(m.operator || "");
+    if (f.date) f.date.value = String(m.date || "");
+    missionMetaAppliedSid = sid || null;
+}
+
+function renderMissionManifestBlock(data) {
+    const box = document.getElementById("mission_manifest");
+    if (!box) return;
+    if (!data?.ok || !data?.manifest) {
+        box.textContent = "Nessun manifest disponibile.";
+        return;
+    }
+    const m = data.manifest;
+    const files = m.files || {};
+    const sizes = data.sizes || {};
+    const mm = m.mission || {};
+    const rows = [
+        `<div><b>SID:</b> ${escapeHtml(m.sid || "-")}</div>`,
+        `<div><b>Stato:</b> ${data.logging_enabled ? "LOG ON" : "LOG OFF"}${data.is_current ? " (sessione corrente)" : ""}</div>`,
+        `<div><b>Creato (SID):</b> ${escapeHtml(m.created_utc || "-")}</div>`,
+        `<div><b>Titolo:</b> ${escapeHtml(mm.title || "-")}</div>`,
+        `<div><b>Luogo:</b> ${escapeHtml(mm.place || "-")}</div>`,
+        `<div><b>Oggetto:</b> ${escapeHtml(mm.objective || "-")}</div>`,
+        `<div><b>Operatore:</b> ${escapeHtml(mm.operator || "-")}</div>`,
+        `<div><b>Data:</b> ${escapeHtml(mm.date || "-")}</div>`,
+        `<div><b>Telemetria:</b> ${escapeHtml(files.telemetry || "-")} (${fmtBytes(sizes.telemetry)})</div>`,
+        `<div><b>Allarmi:</b> ${escapeHtml(files.alarms || "-")} (${fmtBytes(sizes.alarms)})</div>`,
+        `<div><b>Eventi:</b> ${escapeHtml(files.events || "-")} (${fmtBytes(sizes.events)})</div>`,
+    ];
+    box.innerHTML = rows.join("");
+}
+
+function renderMissionEventsBlock(data) {
+    const box = document.getElementById("mission_events");
+    if (!box) return;
+    const arr = data?.events || [];
+    if (!arr.length) {
+        box.textContent = "Nessun evento registrato.";
+        return;
+    }
+    box.innerHTML = arr.map(formatMissionEventLine).join("");
+}
+
+function renderMissionTimePill(data) {
+    const pill = document.getElementById("mission_time_pill");
+    if (!pill) return;
+    const sid = data?.manifest?.sid || data?.sid || snapshot?.logging?.sid || null;
+    const sec = missionElapsedSecFromSid(sid);
+    pill.textContent = sec == null ? "--:--:--" : fmtDuration(sec);
+}
+
+async function refreshMissionTab() {
+    const [manifest, events] = await Promise.all([
+        fetch("/api/log/manifest").then(r => r.json()).catch(() => ({ ok: false })),
+        fetch("/api/log/events_tail?limit=12").then(r => r.json()).catch(() => ({ ok: false, events: [] })),
+    ]);
+
+    missionCurrentSid = manifest?.manifest?.sid || events?.sid || snapshot?.logging?.sid || null;
+    renderMissionManifestBlock(manifest);
+    missionMetaWriteForm(manifest?.manifest?.mission || {}, missionCurrentSid);
+    renderMissionEventsBlock(events);
+    renderMissionTimePill(manifest);
+}
+
+function setupMissionTab() {
+    if (missionTabWired) return;
+    missionTabWired = true;
+
+    const metaBtn = document.getElementById("mission_meta_save");
+    const metaAck = document.getElementById("mission_meta_ack");
+    const btn = document.getElementById("mission_event_add");
+    const input = document.getElementById("mission_event_text");
+    const ack = document.getElementById("mission_event_ack");
+
+    const saveMeta = async () => {
+        try {
+            const mission = missionMetaReadForm();
+            await logs.apiPost("/api/log/manifest_meta", {
+                sid: missionCurrentSid,
+                mission,
+            });
+            if (metaAck) metaAck.textContent = "Metadata missione salvati.";
+            await refreshMissionTab();
+        } catch (e) {
+            if (metaAck) metaAck.textContent = e?.message || "Errore salvataggio metadata";
+        }
+    };
+
+    const send = async () => {
+        const text = String(input?.value || "").trim();
+        if (!text) return;
+        try {
+            await logs.apiPost("/api/log/event", { type: "NOTE", text });
+            if (input) input.value = "";
+            if (ack) ack.textContent = "Evento salvato.";
+            await refreshMissionTab();
+        } catch (e) {
+            if (ack) ack.textContent = e?.message || "Errore salvataggio evento";
+        }
+    };
+
+    if (metaBtn) metaBtn.onclick = saveMeta;
+
+    if (btn) btn.onclick = send;
+    if (input) {
+        input.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter") send();
+        });
+    }
+
+    if (!missionRefreshTimer) {
+        missionRefreshTimer = setInterval(() => {
+            refreshMissionTab().catch(() => { });
+        }, 3000);
+    }
+}
+
 function render(state) {
     const esc = state.esc || {};
     const ids = Object.keys(esc).map(x => parseInt(x, 10)).filter(Number.isFinite).sort((a, b) => a - b);
@@ -221,6 +423,7 @@ function render(state) {
 async function init() {
     snapshot = await fetch("/api/state").then(r => r.json());
     setupTabs();
+    setupMissionTab();
     video.setupVideo();
     setupHelpPanel();
     renderWidgetsMenu();
@@ -239,6 +442,7 @@ async function init() {
     logs.setupLogs();
     await logs.refreshLogStatus().catch(() => { });
     await logs.refreshLogSessions().catch(() => { });
+    await refreshMissionTab().catch(() => { });
     render(snapshot);
 
     const wsProto = location.protocol === "https:" ? "wss" : "ws";
@@ -362,13 +566,18 @@ function saveUiPrefs(p) {
 let uiPrefs = loadUiPrefs();
 uiPrefs.visible ??= Object.fromEntries(WIDGETS.map(w => [w.id, true]));
 uiPrefs.collapsed ??= {};
-uiPrefs.mainTab ??= "mission";
+uiPrefs.mainTab ??= "vehicle";
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.power ??= false;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.motors ??= true;
 uiPrefs.collapsed.missionlog ??= true;
 uiPrefs.lightsCfgCollapsed ??= true;
+if (uiPrefs.mainTabPresetVersion !== 2) {
+    if (uiPrefs.mainTab === "mission") uiPrefs.mainTab = "vehicle";
+    uiPrefs.mainTabPresetVersion = 2;
+    saveUiPrefs(uiPrefs);
+}
 if (uiPrefs.layoutPresetVersion !== 1) {
     uiPrefs.collapsed.alarms = true;
     uiPrefs.collapsed.power = false;
@@ -459,16 +668,23 @@ function setupCollapseButtons() {
 function renderMainSlot(tab) {
     utils.setText('main_mode', tab.toUpperCase());
     const mw = utils.el('missionWrap');
+    const tw = utils.el('missionTabWrap');
     const vw = utils.el('videoWrap');
     const sw = utils.el('sonarWrap');
     if (mw)
-        mw.classList.toggle('hidden', tab !== 'mission');
+        mw.classList.toggle('hidden', tab !== 'vehicle');
+    if (tw)
+        tw.classList.toggle('hidden', tab !== 'mission');
     if (vw)
         vw.classList.toggle('hidden', tab !== 'video');
     if (sw)
         sw.classList.toggle('hidden', tab !== 'sonar');
-    if (tab === 'mission') {
+    if (tab === 'vehicle') {
         th3.ensure3D();
+        return;
+    }
+    if (tab === 'mission') {
+        refreshMissionTab().catch(() => { });
         return;
     }
     if (tab === 'video') {
@@ -494,7 +710,7 @@ function setupTabs() {
             renderMainSlot(uiPrefs.mainTab);
         });
     });
-    const cur = uiPrefs.mainTab || 'mission';
+    const cur = uiPrefs.mainTab || 'vehicle';
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === cur));
     renderMainSlot(cur);
 }
@@ -541,12 +757,6 @@ function setupHelpPanel() {
         if (e.key === "Escape" && !ov.classList.contains("hidden")) close();
     });
 }
-
-window.addEventListener('load', () => {
-    try { init(); }
-    catch (e) { console.error(e); }
-}
-);
 
 window.addEventListener('DOMContentLoaded', () => {
     init().catch(err => {

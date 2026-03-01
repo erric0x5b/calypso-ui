@@ -911,3 +911,62 @@ svg.thRing {
 .logKinds {
   font-size: 11px;
 }
+
+/* Mission tab */
+.missionTabBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.missionGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.missionCol {
+  min-width: 0;
+}
+
+.missionSectionTitle {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .3px;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.missionEventRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.missionEventRow input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.missionMetaGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.missionMetaGrid input,
+.missionMetaGrid button {
+  width: 100%;
+}
+
+@media (max-width: 980px) {
+  .missionGrid2 {
+    grid-template-columns: 1fr;
+  }
+
+  .missionMetaGrid {
+    grid-template-columns: 1fr;
+  }
+}
