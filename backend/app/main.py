@@ -71,6 +71,9 @@ MAVLINK_ENABLED = os.getenv("MAVLINK_ENABLED", "1").strip().lower() in ("1", "tr
 MAVLINK_PYMAVLINK_AVAILABLE = (mavutil is not None)
 MAVLINK_WS_ENABLED = MAVLINK_ENABLED and bool(MAVLINK_WS_URL)
 MAVLINK_UDP_ENABLED = MAVLINK_ENABLED and (not MAVLINK_WS_ENABLED) and MAVLINK_PYMAVLINK_AVAILABLE
+MAV_MODE_FLAG_SAFETY_ARMED = int(
+    getattr(getattr(mavutil, "mavlink", object()), "MAV_MODE_FLAG_SAFETY_ARMED", 0x80)
+) if mavutil is not None else 0x80
 
 # Ensure log dir exists early
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -198,6 +201,104 @@ def update_depth_from_dict(msg: dict):
             if d is not None:
                 nav["depth_m"] = d
             break
+
+
+def normalize_bool01(v) -> Optional[int]:
+    if isinstance(v, bool):
+        return 1 if v else 0
+    if isinstance(v, (int, float)):
+        return 1 if int(v) != 0 else 0
+    if isinstance(v, str):
+        tok = v.strip().lower()
+        if tok in ("1", "true", "on", "armed", "enable", "enabled"):
+            return 1
+        if tok in ("0", "false", "off", "disarmed", "disable", "disabled"):
+            return 0
+    if isinstance(v, (list, tuple, set)):
+        txt = " ".join(str(x) for x in v).upper()
+        if "SAFETY_ARMED" in txt:
+            return 1
+    return None
+
+
+def parse_safety_armed_from_base_mode(base_mode) -> Optional[int]:
+    if base_mode is None:
+        return None
+
+    if isinstance(base_mode, dict):
+        bits = base_mode.get("bits") or base_mode.get("flags")
+        armed_bits = normalize_bool01(bits)
+        if armed_bits is not None:
+            return armed_bits
+        raw = base_mode.get("value", base_mode.get("raw"))
+        if raw is None:
+            return None
+        base_mode = raw
+
+    if isinstance(base_mode, str):
+        tok = base_mode.strip()
+        if not tok:
+            return None
+        if "SAFETY_ARMED" in tok.upper():
+            return 1
+        try:
+            base_mode = int(tok, 0)
+        except Exception:
+            return None
+
+    try:
+        bm = int(base_mode)
+    except Exception:
+        return None
+    return 1 if (bm & MAV_MODE_FLAG_SAFETY_ARMED) else 0
+
+
+def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = "HEARTBEAT") -> None:
+    armed = normalize_bool01(safety_armed)
+    if armed is None:
+        armed = parse_safety_armed_from_base_mode(base_mode)
+    if armed is None:
+        return
+
+    bm: Optional[int] = None
+    try:
+        if isinstance(base_mode, dict):
+            bm_raw = base_mode.get("value", base_mode.get("raw"))
+            if bm_raw is not None:
+                bm = int(bm_raw)
+        elif base_mode is not None and not isinstance(base_mode, (list, tuple, set)):
+            bm = int(base_mode)
+    except Exception:
+        bm = None
+
+    mav = state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
+    prev = mav.get("safety_armed")
+    mav["safety_armed"] = int(armed)
+    mav["base_mode"] = bm
+    mav["last_heartbeat_ms"] = int(datetime.utcnow().timestamp() * 1000) & 0xFFFFFFFF
+
+    if prev is not None and int(prev) == int(armed):
+        return
+
+    nav = state.get("nav") or {}
+    txt = f"HEARTBEAT MAV_MODE_SAFETY_ARMED={int(armed)}"
+    if bm is not None:
+        txt += f" base_mode={bm}"
+    txt += f" src={source}"
+    append_event_jsonl({
+        "ts_ms": int(state.get("last_update_ms") or 0),
+        "mission_time": nav.get("mission_time_s"),
+        "depth": nav.get("depth_m"),
+        "heading": nav.get("heading_deg"),
+        "lat": nav.get("lat_deg"),
+        "lon": nav.get("lon_deg"),
+        "alt_m": nav.get("alt_m"),
+        "src": "MAV",
+        "type": "MAV_ARM",
+        "armed": int(armed),
+        "base_mode": bm,
+        "text": txt,
+    })
 
 def build_nmea_line(fields: list[str]) -> str:
     return parser.build_nmea_line(fields)
@@ -957,6 +1058,12 @@ async def mavlink_reader():
                 state["att"]["roll_deg"]  = msg.roll  * 57.295779513
                 state["att"]["pitch_deg"] = msg.pitch * 57.295779513
                 state["att"]["yaw_deg"]   = msg.yaw   * 57.295779513
+            elif mt == "HEARTBEAT":
+                update_mav_heartbeat_armed(
+                    base_mode=getattr(msg, "base_mode", None),
+                    safety_armed=getattr(msg, "MAV_MODE_SAFETY_ARMED", None),
+                    source="MAVLINK_UDP",
+                )
             elif mt == "VFR_HUD":
                 state["nav"]["heading_deg"] = getattr(msg, "heading", None)
                 update_depth_from_alt(getattr(msg, "alt", None))
@@ -1035,6 +1142,12 @@ async def mavlink_ws_loop():
                             "pitch_deg": float(pitch) * RAD2DEG if pitch is not None else None,
                             "yaw_deg": float(yaw) * RAD2DEG if yaw is not None else None,
                         }
+                    elif mtype == "HEARTBEAT":
+                        update_mav_heartbeat_armed(
+                            base_mode=msg.get("base_mode", msg.get("baseMode")),
+                            safety_armed=msg.get("MAV_MODE_SAFETY_ARMED", msg.get("safety_armed")),
+                            source="MAVLINK_WS",
+                        )
                     elif mtype == "VFR_HUD":
                         hdg = msg.get("heading")
                         alt = msg.get("alt")

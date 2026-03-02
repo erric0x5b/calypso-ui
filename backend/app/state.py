@@ -44,8 +44,93 @@ state.setdefault("nav", {
     "lon_deg": None,
     "mission_time_s": None,
 })
-state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
+state.setdefault("mav", {
+    "last_ms": 0,
+    "msgs": 0,
+    "drops": 0,
+    "safety_armed": None,
+    "base_mode": None,
+    "last_heartbeat_ms": 0,
+})
 state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
+
+# LiFePO4 OCV->SOC approximation table (single cell, at-rest).
+# NOTE: under load and temperature variations this estimate can drift significantly.
+LFP_OCV_SOC_POINTS = [
+    (2.80, 0.0),
+    (3.00, 5.0),
+    (3.10, 10.0),
+    (3.20, 20.0),
+    (3.24, 30.0),
+    (3.26, 40.0),
+    (3.28, 50.0),
+    (3.30, 60.0),
+    (3.31, 68.0),
+    (3.32, 76.0),
+    (3.33, 84.0),
+    (3.34, 90.0),
+    (3.35, 94.0),
+    (3.38, 97.0),
+    (3.42, 99.0),
+    (3.55, 100.0),
+]
+LFP_SERIES_CELLS = 14
+
+
+def _interp_soc(points: list[tuple[float, float]], x: float) -> float:
+    if x <= points[0][0]:
+        return float(points[0][1])
+    if x >= points[-1][0]:
+        return float(points[-1][1])
+    for i in range(1, len(points)):
+        x1, y1 = points[i - 1]
+        x2, y2 = points[i]
+        if x <= x2:
+            if x2 <= x1:
+                return float(y2)
+            t = (x - x1) / (x2 - x1)
+            return float(y1 + t * (y2 - y1))
+    return float(points[-1][1])
+
+
+def estimate_soc_lifepo4_14s(vbatt_mv: Any) -> float | None:
+    try:
+        mv = float(vbatt_mv)
+    except Exception:
+        return None
+    if mv <= 0:
+        return None
+    v_cell = (mv / 1000.0) / float(LFP_SERIES_CELLS)
+    if v_cell < 2.0 or v_cell > 4.5:
+        return None
+    soc = _interp_soc(LFP_OCV_SOC_POINTS, v_cell)
+    return max(0.0, min(100.0, soc))
+
+
+def apply_soc_estimation(pod: dict, kv: dict) -> None:
+    real_soc = None
+    for key in ("SOC", "Soc", "SOC_pct", "Soc_pct"):
+        if key in kv:
+            try:
+                real_soc = float(kv.get(key))
+            except Exception:
+                real_soc = None
+            break
+
+    if real_soc is not None:
+        pod["SOC"] = max(0.0, min(100.0, real_soc))
+        pod["SOC_source"] = "BMS"
+        pod["SOC_estimated"] = 0
+        return
+
+    vbatt_mv = kv.get("Vbatt_mv", pod.get("Vbatt_mv"))
+    est = estimate_soc_lifepo4_14s(vbatt_mv)
+    if est is None:
+        return
+
+    pod["SOC"] = round(est, 1)
+    pod["SOC_source"] = "EST_VOLT_14S_LFP"
+    pod["SOC_estimated"] = 1
 
 # simple command id generator
 _cmd_id = 0
@@ -256,10 +341,12 @@ def update_state(parsed: dict):
 
     if msg == "ENV" and src in state["pods"]:
         state["pods"][src].update(kv)
+        apply_soc_estimation(state["pods"][src], kv)
         return
 
     if msg == "PWR" and src in state["pods"]:
         state["pods"][src].update(kv)
+        apply_soc_estimation(state["pods"][src], kv)
         return
 
     if msg == "DIG" and src in state["pods"]:

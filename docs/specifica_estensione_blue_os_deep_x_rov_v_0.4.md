@@ -113,7 +113,11 @@ Vantaggi:
   - Comando sicurezza VMOT (SCADA):
     - `Type=VMOT_MASTER`
     - payload: `Enable` (0/1)
-    - Regola UI: enable con hold 3 secondi, disable immediato
+    - Regola UI: enable con hold 3 secondi, disable immediato (touch + joystick)
+  - Tracciamento MAVLink:
+    - da `HEARTBEAT`: `MAV_MODE_SAFETY_ARMED`
+    - log eventi su cambio stato arm/disarm
+    - warning UI se Cockpit armato con VMOT spenta
 
 - `ACK` (ROV → SFC) – response a `CMD`
   - Include: `CmdId` (u32), `Ok` (0/1), (opz.) `Err` (u16/u32), `Text`
@@ -136,6 +140,8 @@ Per ciascun pod:
 
 - `Vbatt` (V)
 - `SOC` (%)
+  - Fallback senza BMS: stima da `Vbatt` su curva LiFePO4 (14S3P), marcata come `SOC stimato`
+  - Nota accuratezza: stima affidabile soprattutto a basso carico / quasi a riposo
 - `Ibatt` (A) in tempo reale
 - Stato **parallelo** (0/1)
 - Stato **connessione al bus comune** (`BusConn`: **ON/OFF** – indica i MOSFET/Power_Switch attivi)

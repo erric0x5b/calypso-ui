@@ -582,6 +582,13 @@ label {
   min-width: 220px;
 }
 
+.vmotCockpitWarn {
+  border-color: rgba(239, 68, 68, .55);
+  background: rgba(239, 68, 68, .18);
+  color: #ffd1d1;
+  font-weight: 900;
+}
+
 .vmotActions {
   display: grid;
   grid-template-columns: minmax(200px, 1fr) auto;

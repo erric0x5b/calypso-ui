@@ -27,6 +27,9 @@ let vmotHoldActive = false;
 let vmotHoldStartMs = 0;
 let vmotLastBeepSec = -1;
 let vmotCmdBusy = false;
+let gpVmotHoldActive = false;
+let gpVmotHoldStartMs = 0;
+let gpVmotLastBeepSec = -1;
 
 const VMOT_ENABLE_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
@@ -40,6 +43,8 @@ const GP_ACTIONS = [
     { key: "light_ch_next", label: "Canale luce successivo", def: 13 },
     { key: "light_on", label: "Luce ON (dim corrente)", def: 0 },
     { key: "light_off", label: "Luce OFF", def: 1 },
+    { key: "vmot_enable_hold", label: "VMOT ENABLE hold 3s", def: -1 },
+    { key: "vmot_disable", label: "VMOT DISABLE immediato", def: -1 },
     { key: "add_mark", label: "Aggiungi marker missione", def: 2 },
     { key: "toggle_log", label: "Start/Stop logging", def: 3 },
     { key: "tab_cycle", label: "Ciclo tab", def: 9 },
@@ -234,6 +239,21 @@ function renderVmotState(state) {
             : `VMOT: PARTIAL (${onCount}/6)`;
 }
 
+function renderVmotCockpitWarning(state) {
+    const box = document.getElementById("vmot_cockpit_warn");
+    if (!box) return;
+
+    const armedRaw = state?.mav?.safety_armed;
+    const cockpitArmed = (armedRaw === 1 || armedRaw === "1" || armedRaw === true);
+    const anyVmotOn = vmotBits(state).some(Boolean);
+    const show = cockpitArmed && !anyVmotOn;
+
+    box.classList.toggle("hidden", !show);
+    box.textContent = show
+        ? "ATTENZIONE: motori ARMATI in Cockpit, ma VMOT OFF"
+        : "";
+}
+
 function vmotAckText(txt) {
     const out = document.getElementById("vmot_cmd_ack");
     if (out) out.textContent = txt;
@@ -353,6 +373,7 @@ function vmotHoldStep() {
 
 function startVmotHold(ev) {
     if (vmotCmdBusy || vmotHoldActive) return;
+    cancelGpVmotHold();
     ensureAlarmAudioUnlock();
     vmotHoldActive = true;
     vmotHoldStartMs = performance.now();
@@ -386,6 +407,7 @@ function setupVmotControls() {
     if (disBtn && !disBtn.dataset.wired) {
         disBtn.dataset.wired = "1";
         disBtn.addEventListener("click", () => {
+            cancelGpVmotHold();
             cancelVmotHold();
             sendVmotMaster(0);
         });
@@ -780,6 +802,7 @@ function render(state) {
     if (mb) mb.innerHTML = renderPowerScada(state);
     if (ms) ms.innerHTML = scadaSvg(state);
     renderVmotState(state);
+    renderVmotCockpitWarning(state);
 
     const ar = document.getElementById("att_readout");
     if (ar) {
@@ -1417,6 +1440,53 @@ async function gpToggleLogging() {
     }
 }
 
+function cancelGpVmotHold() {
+    if (!gpVmotHoldActive) return;
+    gpVmotHoldActive = false;
+    gpVmotLastBeepSec = -1;
+    if (!vmotHoldActive) vmotEnableUi(0);
+}
+
+function updateGpVmotHold(buttons) {
+    const idx = Number(gpMap.vmot_enable_hold);
+    if (!Number.isInteger(idx) || idx < 0 || vmotCmdBusy || vmotHoldActive) {
+        cancelGpVmotHold();
+        return;
+    }
+
+    const pressed = gamepadButtonPressed(buttons, idx);
+    if (!pressed) {
+        cancelGpVmotHold();
+        return;
+    }
+
+    ensureAlarmAudioUnlock();
+    if (!gpVmotHoldActive) {
+        gpVmotHoldActive = true;
+        gpVmotHoldStartMs = performance.now();
+        gpVmotLastBeepSec = -1;
+        vmotEnableUi(0, "ENABLE VMOT GP (3s hold)");
+    }
+
+    const elapsed = Math.max(0, performance.now() - gpVmotHoldStartMs);
+    const progress = Math.min(1, elapsed / VMOT_ENABLE_HOLD_MS);
+    const remainSec = Math.max(0, Math.ceil((VMOT_ENABLE_HOLD_MS - elapsed) / 1000));
+    vmotEnableUi(progress, `ENABLE VMOT GP (${remainSec}s)`);
+
+    const sec = Math.floor(elapsed / 1000);
+    if (sec > gpVmotLastBeepSec && sec > 0) {
+        gpVmotLastBeepSec = sec;
+        playUiBeep(740, 0.12, 0.06, true);
+    }
+
+    if (elapsed >= VMOT_ENABLE_HOLD_MS) {
+        gpVmotHoldActive = false;
+        gpVmotLastBeepSec = -1;
+        vmotEnableUi(1, "ENABLE VMOT (sending...)");
+        sendVmotMaster(1).finally(() => vmotEnableUi(0));
+    }
+}
+
 function setupJoystickControls() {
     if (gpLoopStarted) return;
     gpLoopStarted = true;
@@ -1427,6 +1497,7 @@ function setupJoystickControls() {
             const gp = pads.find((x) => !!x);
             if (!gp) {
                 gpPrevButtons = [];
+                cancelGpVmotHold();
                 const status = document.getElementById("setup_gp_status");
                 if (status) status.textContent = "No gamepad connected.";
                 requestAnimationFrame(loop);
@@ -1443,6 +1514,12 @@ function setupJoystickControls() {
             if (gamepadEdge(buttons, gpMap.light_ch_next)) setGpLightChannel(gpLightCh + 1);
             if (gamepadEdge(buttons, gpMap.light_on)) gpSendLight("ON");
             if (gamepadEdge(buttons, gpMap.light_off)) gpSendLight("OFF");
+            if (gamepadEdge(buttons, gpMap.vmot_disable)) {
+                cancelGpVmotHold();
+                cancelVmotHold();
+                sendVmotMaster(0);
+            }
+            updateGpVmotHold(buttons);
             if (gamepadEdge(buttons, gpMap.add_mark)) gpAddMarkerEvent();
             if (gamepadEdge(buttons, gpMap.toggle_log)) gpToggleLogging();
             if (gamepadEdge(buttons, gpMap.tab_cycle)) cycleMainTab(1);

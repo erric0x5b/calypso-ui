@@ -23,6 +23,9 @@ export function renderPowerScada(state){
 
   const vbusMv = (b1.Vbus_mv ?? b2.Vbus_mv);
   const vbusTxt = (vbusMv==null ? "-" : (vbusMv/1000).toFixed(2) + " V");
+  const socEst1 = (b1.SOC_estimated === 1 || b1.SOC_estimated === "1");
+  const socEst2 = (b2.SOC_estimated === 1 || b2.SOC_estimated === "1");
+  const socEstAny = socEst1 || socEst2;
 
   const badge = (kind, text) => {
     const map = {
@@ -59,6 +62,7 @@ export function renderPowerScada(state){
       ${badge(podKind(online2, bus2), `POD2 ${podText(online2, bus2)}`)}
       ${badge(vbusKind, `VBUS ${vbusTxt}`)}
       ${badge(faultKind, faultText)}
+      ${socEstAny ? badge("warn", "SOC stimato da Vbatt (LiFePO4 14S)") : ""}
     </div>
   `;
 }
@@ -93,8 +97,12 @@ export function scadaSvg(s) {
 
   const vb1 = fmtV(b1.Vbatt_mv), ib1 = fmtA(b1.Ibatt_ma), tb1 = fmtC(b1.Temp_dC);
   const vb2 = fmtV(b2.Vbatt_mv), ib2 = fmtA(b2.Ibatt_ma), tb2 = fmtC(b2.Temp_dC);
+  const socEst1 = (b1.SOC_estimated === 1 || b1.SOC_estimated === "1");
+  const socEst2 = (b2.SOC_estimated === 1 || b2.SOC_estimated === "1");
   const soc1 = fmtPct(pick(b1.SOC, b1.Soc, b1.SOC_pct, b1.Soc_pct));
   const soc2 = fmtPct(pick(b2.SOC, b2.Soc, b2.SOC_pct, b2.Soc_pct));
+  const soc1View = (socEst1 && soc1 !== "-") ? `~${soc1}` : soc1;
+  const soc2View = (socEst2 && soc2 !== "-") ? `~${soc2}` : soc2;
   const vbusTxt = (vbus == null ? "-" : (vbus / 1000).toFixed(2) + " V");
 
   const v1 = (b1.Vmot1On === 1 || b1.Vmot1On === "1");
@@ -182,7 +190,7 @@ export function scadaSvg(s) {
       <text x="${BAT1_C}" y="${BAT1_Y+28}" font-size="14" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 55, "Vbatt", vb1) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 75, "Ibatt", ib1) }
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 95, "SOC", soc1) }
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 95, socEst1 ? "SOC est" : "SOC", soc1View) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 115, "Temp", tb1) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 135, "BusConn", (c1 ? "ON" : "OFF")) }
 
@@ -207,7 +215,7 @@ export function scadaSvg(s) {
       <text x="${BAT2_C}" y="${BAT2_Y+28}" font-size="14" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 55, "Vbatt", vb2) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 75, "Ibatt", ib2) }
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 95, "SOC", soc2) }
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 95, socEst2 ? "SOC est" : "SOC", soc2View) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 115, "Temp", tb2) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 135, "BusConn", (c2 ? "ON" : "OFF")) }
 
