@@ -41,6 +41,7 @@ from backend.app.state import (
     make_sid,
     append_telemetry_csv,
     append_event_jsonl,
+    append_alarm_csv,
 )
 
 # ----------------------------
@@ -224,6 +225,7 @@ async def offline_watchdog():
                 }
                 state["alarms_history"].append(alarm)
                 state["alarms_active"].append(alarm)
+                append_alarm_csv(alarm)
                 await ws_broadcast({"type": "alarm", "alarm": alarm})
 
 # ----------------------------

@@ -1,5 +1,6 @@
 import os
 import json
+import csv
 from datetime import datetime
 from typing import Tuple, Dict, Any
 
@@ -131,6 +132,29 @@ def append_event_jsonl(evt: dict) -> bool:
         return False
 
 
+def append_alarm_csv(alarm: dict) -> bool:
+    """Append one alarm row to alarms_path when logging is enabled."""
+    if not state.get("logging", {}).get("enabled"):
+        return False
+    if not alarms_path:
+        return False
+    try:
+        with open(alarms_path, "a", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow([
+                alarm.get("ts_ms"),
+                alarm.get("src"),
+                alarm.get("id"),
+                alarm.get("sev"),
+                alarm.get("active"),
+                alarm.get("latched"),
+                alarm.get("text"),
+            ])
+        return True
+    except Exception:
+        return False
+
+
 def update_state(parsed: dict):
     """Update `state` from a parsed NMEA-like message (parsed from parser.parse_nmea_line).
     This implements the same logic previously embedded in `main.py`.
@@ -202,6 +226,7 @@ def update_state(parsed: dict):
             "text": kv.get("Text") or kv.get("TextB64"),
         }
         state["alarms_history"].append(alarm)
+        append_alarm_csv(alarm)
         if alarm["active"]:
             state["alarms_active"] = [a for a in state["alarms_active"] if not (a.get("id") == alarm["id"] and a.get("src") == src)]
             state["alarms_active"].append(alarm)

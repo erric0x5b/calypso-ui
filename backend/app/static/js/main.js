@@ -267,6 +267,21 @@ function renderMissionTimePill(data) {
     pill.textContent = sec == null ? "--:--:--" : fmtDuration(sec);
 }
 
+async function refreshMissionLogControls() {
+    const pill = document.getElementById("mission_log_status");
+    const bStart = document.getElementById("mission_log_start");
+    const bStop = document.getElementById("mission_log_stop");
+    try {
+        const s = await fetch("/api/log/status").then((r) => r.json());
+        const sid = String(s?.sid || "").trim();
+        if (pill) pill.textContent = s?.enabled ? `LOG ON ${sid}` : (sid ? `LOG OFF ${sid}` : "LOG OFF");
+        if (bStart) bStart.disabled = !!s?.enabled;
+        if (bStop) bStop.disabled = !s?.enabled;
+    } catch {
+        if (pill) pill.textContent = "LOG ?";
+    }
+}
+
 async function refreshMissionTab() {
     const [manifest, events] = await Promise.all([
         fetch("/api/log/manifest").then(r => r.json()).catch(() => ({ ok: false })),
@@ -278,6 +293,7 @@ async function refreshMissionTab() {
     missionMetaWriteForm(manifest?.manifest?.mission || {}, missionCurrentSid);
     renderMissionEventsBlock(events);
     renderMissionTimePill(manifest);
+    await refreshMissionLogControls();
 }
 
 function setupMissionTab() {
@@ -286,6 +302,8 @@ function setupMissionTab() {
 
     const metaBtn = document.getElementById("mission_meta_save");
     const metaAck = document.getElementById("mission_meta_ack");
+    const logStartBtn = document.getElementById("mission_log_start");
+    const logStopBtn = document.getElementById("mission_log_stop");
     const btn = document.getElementById("mission_event_add");
     const input = document.getElementById("mission_event_text");
     const ack = document.getElementById("mission_event_ack");
@@ -318,6 +336,32 @@ function setupMissionTab() {
     };
 
     if (metaBtn) metaBtn.onclick = saveMeta;
+
+    if (logStartBtn) {
+        logStartBtn.onclick = async () => {
+            try {
+                await logs.apiPost("/api/log/start");
+                await logs.refreshLogStatus().catch(() => { });
+                await logs.refreshLogSessions().catch(() => { });
+                await refreshMissionTab();
+            } catch (e) {
+                if (metaAck) metaAck.textContent = e?.message || "Errore start log";
+            }
+        };
+    }
+
+    if (logStopBtn) {
+        logStopBtn.onclick = async () => {
+            try {
+                await logs.apiPost("/api/log/stop");
+                await logs.refreshLogStatus().catch(() => { });
+                await logs.refreshLogSessions().catch(() => { });
+                await refreshMissionTab();
+            } catch (e) {
+                if (metaAck) metaAck.textContent = e?.message || "Errore stop log";
+            }
+        };
+    }
 
     if (btn) btn.onclick = send;
     if (input) {
