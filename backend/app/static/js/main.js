@@ -11,6 +11,41 @@ let missionRefreshTimer = null;
 let missionTabWired = false;
 let missionCurrentSid = null;
 let missionMetaAppliedSid = null;
+let gpLoopStarted = false;
+let gpPrevButtons = [];
+let gpLightCh = 1;
+let gpBusyLight = false;
+let gpBusyEvent = false;
+let gpBusyLog = false;
+let setupWired = false;
+let alarmPrevActiveKeys = null;
+let alarmBeepCtx = null;
+let alarmBeepCooldownUntil = 0;
+let alarmAudioUnlockWired = false;
+let vmotHoldTimer = null;
+let vmotHoldActive = false;
+let vmotHoldStartMs = 0;
+let vmotLastBeepSec = -1;
+let vmotCmdBusy = false;
+
+const VMOT_ENABLE_HOLD_MS = 3000;
+const VMOT_ACK_TIMEOUT_MS = 3000;
+const VMOT_ACK_POLL_MS = 120;
+
+const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "setup"];
+const GP_ACTIONS = [
+    { key: "tab_prev", label: "Tab precedente", def: 14 },
+    { key: "tab_next", label: "Tab successivo", def: 15 },
+    { key: "light_ch_prev", label: "Canale luce precedente", def: 12 },
+    { key: "light_ch_next", label: "Canale luce successivo", def: 13 },
+    { key: "light_on", label: "Luce ON (dim corrente)", def: 0 },
+    { key: "light_off", label: "Luce OFF", def: 1 },
+    { key: "add_mark", label: "Aggiungi marker missione", def: 2 },
+    { key: "toggle_log", label: "Start/Stop logging", def: 3 },
+    { key: "tab_cycle", label: "Ciclo tab", def: 9 },
+];
+const GP_DEFAULT_MAP = Object.fromEntries(GP_ACTIONS.map((x) => [x.key, x.def]));
+let gpMap = loadGpMap();
 
 const ALARM_GUIDE_BY_ID = {
     9001: {
@@ -46,6 +81,318 @@ const ALARM_GUIDE_BY_TEXT = [
         action: "Controlla stato POD, carico, cavi potenza e protezioni."
     },
 ];
+
+function normalizeGpMap(raw) {
+    const out = { ...GP_DEFAULT_MAP };
+    const src = (raw && typeof raw === "object") ? raw : {};
+    for (const it of GP_ACTIONS) {
+        const v = Number(src[it.key]);
+        out[it.key] = Number.isInteger(v) && v >= -1 && v <= 31 ? v : it.def;
+    }
+    return out;
+}
+
+function loadGpMap() {
+    try {
+        const raw = JSON.parse(localStorage.getItem("calypso_gp_map") || "{}");
+        return normalizeGpMap(raw);
+    } catch {
+        return { ...GP_DEFAULT_MAP };
+    }
+}
+
+function saveGpMap(map) {
+    gpMap = normalizeGpMap(map);
+    localStorage.setItem("calypso_gp_map", JSON.stringify(gpMap));
+}
+
+function gpSelectOptions(selected) {
+    let html = `<option value="-1">Disabled</option>`;
+    for (let i = 0; i <= 15; i++) {
+        html += `<option value="${i}" ${Number(selected) === i ? "selected" : ""}>Button ${i}</option>`;
+    }
+    return html;
+}
+
+function alarmKey(a) {
+    const src = String(a?.src || "");
+    const id = String(a?.id ?? "");
+    const text = String(a?.text || "");
+    return `${src}|${id}|${text}`;
+}
+
+function ensureAlarmAudioUnlock() {
+    if (alarmAudioUnlockWired) return;
+    alarmAudioUnlockWired = true;
+
+    const unlock = () => {
+        try {
+            const Ctor = window.AudioContext || window.webkitAudioContext;
+            if (!Ctor) return;
+            if (!alarmBeepCtx) alarmBeepCtx = new Ctor();
+            if (alarmBeepCtx.state === "suspended") alarmBeepCtx.resume().catch(() => { });
+        } catch {
+            // Browser may block audio contexts; ignore and keep UI responsive.
+        }
+    };
+
+    document.addEventListener("pointerdown", unlock, { passive: true });
+    document.addEventListener("keydown", unlock);
+}
+
+function playUiBeep(freqHz = 880, durationSec = 0.20, peak = 0.08, force = false) {
+    try {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) return false;
+        if (!alarmBeepCtx) alarmBeepCtx = new Ctor();
+        if (alarmBeepCtx.state === "suspended") {
+            if (force) alarmBeepCtx.resume().catch(() => { });
+            if (alarmBeepCtx.state === "suspended") return false;
+        }
+
+        const dur = Math.max(0.05, Number(durationSec) || 0.20);
+        const gainPeak = Math.max(0.005, Math.min(0.20, Number(peak) || 0.08));
+        const t0 = alarmBeepCtx.currentTime + 0.01;
+        const osc = alarmBeepCtx.createOscillator();
+        const gain = alarmBeepCtx.createGain();
+
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(Math.max(120, Number(freqHz) || 880), t0);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(gainPeak, t0 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(gain);
+        gain.connect(alarmBeepCtx.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.01);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function playAlarmBeep(force = false) {
+    if (!force && !uiPrefs.showAlarmBeep) return;
+    const now = performance.now();
+    if (!force && now < alarmBeepCooldownUntil) return;
+    alarmBeepCooldownUntil = now + 1200;
+    playUiBeep(880, 0.20, 0.08, force);
+}
+
+function handleAlarmBeep(state) {
+    const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
+    const cur = new Set(active.map(alarmKey));
+
+    if (alarmPrevActiveKeys == null) {
+        alarmPrevActiveKeys = cur;
+        return;
+    }
+
+    let hasNew = false;
+    for (const key of cur) {
+        if (!alarmPrevActiveKeys.has(key)) {
+            hasNew = true;
+            break;
+        }
+    }
+    alarmPrevActiveKeys = cur;
+
+    if (hasNew) playAlarmBeep();
+}
+
+function vmotBits(state) {
+    const b1 = state?.pods?.BAT1 || {};
+    const b2 = state?.pods?.BAT2 || {};
+    return [
+        (b1.Vmot1On === 1 || b1.Vmot1On === "1"),
+        (b1.Vmot2On === 1 || b1.Vmot2On === "1"),
+        (b1.Vmot3On === 1 || b1.Vmot3On === "1"),
+        (b2.Vmot4On === 1 || b2.Vmot4On === "1"),
+        (b2.Vmot5On === 1 || b2.Vmot5On === "1"),
+        (b2.Vmot6On === 1 || b2.Vmot6On === "1"),
+    ];
+}
+
+function renderVmotState(state) {
+    const out = document.getElementById("vmot_state");
+    if (!out) return;
+
+    const bits = vmotBits(state);
+    const onCount = bits.filter(Boolean).length;
+    const allOn = onCount === 6;
+    const allOff = onCount === 0;
+
+    out.classList.remove("vmotOn", "vmotOff", "vmotPartial");
+    if (allOn) out.classList.add("vmotOn");
+    else if (allOff) out.classList.add("vmotOff");
+    else out.classList.add("vmotPartial");
+
+    out.textContent = allOn
+        ? "VMOT: ENABLED (6/6)"
+        : allOff
+            ? "VMOT: DISABLED (0/6)"
+            : `VMOT: PARTIAL (${onCount}/6)`;
+}
+
+function vmotAckText(txt) {
+    const out = document.getElementById("vmot_cmd_ack");
+    if (out) out.textContent = txt;
+}
+
+function vmotEnableUi(progress, text = null) {
+    const btn = document.getElementById("vmot_enable_hold");
+    const fill = document.getElementById("vmot_enable_fill");
+    const label = document.getElementById("vmot_enable_text");
+    if (!btn || !fill || !label) return;
+
+    const p = Math.max(0, Math.min(1, Number(progress) || 0));
+    fill.style.width = `${(p * 100).toFixed(1)}%`;
+    btn.classList.toggle("holding", vmotHoldActive);
+    label.textContent = text || "ENABLE VMOT (hold 3s)";
+}
+
+function vmotSetBusy(busy) {
+    const b = !!busy;
+    vmotCmdBusy = b;
+    const enBtn = document.getElementById("vmot_enable_hold");
+    const disBtn = document.getElementById("vmot_disable_now");
+    if (enBtn) {
+        enBtn.disabled = b;
+        enBtn.classList.toggle("busy", b);
+    }
+    if (disBtn) disBtn.disabled = b;
+}
+
+function sleepMs(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitCmdAck(cmdId, timeoutMs = VMOT_ACK_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const r = await fetch(`/api/cmd/ack?cmd_id=${encodeURIComponent(cmdId)}`, { cache: "no-store" });
+        const j = await r.json();
+        if (j?.ok && j.status === "ack" && j.ack) return j.ack;
+        await sleepMs(VMOT_ACK_POLL_MS);
+    }
+    return null;
+}
+
+async function sendVmotMaster(enable) {
+    if (vmotCmdBusy) return false;
+    vmotSetBusy(true);
+    try {
+        const en = Number(enable) === 1 ? 1 : 0;
+        vmotAckText(`VMOT ${en ? "ENABLE" : "DISABLE"}: sending...`);
+        const r = await fetch("/api/cmd/vmot_master", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enable: en }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j?.ok) {
+            vmotAckText(`VMOT ${en ? "ENABLE" : "DISABLE"}: send failed`);
+            return false;
+        }
+
+        vmotAckText(`CmdId ${j.cmd_id} sent (${en ? "ENABLE" : "DISABLE"})`);
+        const ack = await waitCmdAck(j.cmd_id).catch(() => null);
+        if (!ack) {
+            vmotAckText(`CmdId ${j.cmd_id}: ACK timeout`);
+            return false;
+        }
+
+        const ok = Number(ack.ok) === 1;
+        const txt = ack.text ? ` (${ack.text})` : "";
+        const err = ack.err != null ? ` err:${ack.err}` : "";
+        vmotAckText(ok
+            ? `ACK OK CmdId ${j.cmd_id}${txt}`
+            : `ACK ERR CmdId ${j.cmd_id}${err}${txt}`);
+        return ok;
+    } catch {
+        vmotAckText(`VMOT ${Number(enable) === 1 ? "ENABLE" : "DISABLE"}: error`);
+        return false;
+    } finally {
+        vmotSetBusy(false);
+    }
+}
+
+function cancelVmotHold() {
+    if (!vmotHoldActive) return;
+    vmotHoldActive = false;
+    if (vmotHoldTimer != null) {
+        cancelAnimationFrame(vmotHoldTimer);
+        vmotHoldTimer = null;
+    }
+    vmotEnableUi(0);
+}
+
+function vmotHoldStep() {
+    if (!vmotHoldActive) return;
+    const elapsed = Math.max(0, performance.now() - vmotHoldStartMs);
+    const progress = Math.min(1, elapsed / VMOT_ENABLE_HOLD_MS);
+    const remainSec = Math.max(0, Math.ceil((VMOT_ENABLE_HOLD_MS - elapsed) / 1000));
+    vmotEnableUi(progress, `ENABLE VMOT (${remainSec}s)`);
+
+    const sec = Math.floor(elapsed / 1000);
+    if (sec > vmotLastBeepSec && sec > 0) {
+        vmotLastBeepSec = sec;
+        playUiBeep(740, 0.12, 0.06, true);
+    }
+
+    if (elapsed >= VMOT_ENABLE_HOLD_MS) {
+        vmotHoldActive = false;
+        vmotHoldTimer = null;
+        vmotEnableUi(1, "ENABLE VMOT (sending...)");
+        sendVmotMaster(1).finally(() => vmotEnableUi(0));
+        return;
+    }
+
+    vmotHoldTimer = requestAnimationFrame(vmotHoldStep);
+}
+
+function startVmotHold(ev) {
+    if (vmotCmdBusy || vmotHoldActive) return;
+    ensureAlarmAudioUnlock();
+    vmotHoldActive = true;
+    vmotHoldStartMs = performance.now();
+    vmotLastBeepSec = -1;
+    vmotEnableUi(0, "ENABLE VMOT (3s hold)");
+
+    const btn = document.getElementById("vmot_enable_hold");
+    if (btn && ev && typeof ev.pointerId === "number" && btn.setPointerCapture) {
+        try { btn.setPointerCapture(ev.pointerId); } catch { }
+    }
+
+    vmotHoldTimer = requestAnimationFrame(vmotHoldStep);
+}
+
+function setupVmotControls() {
+    const enBtn = document.getElementById("vmot_enable_hold");
+    const disBtn = document.getElementById("vmot_disable_now");
+
+    if (enBtn && !enBtn.dataset.wired) {
+        enBtn.dataset.wired = "1";
+        enBtn.addEventListener("pointerdown", (ev) => {
+            ev.preventDefault();
+            startVmotHold(ev);
+        });
+        enBtn.addEventListener("pointerup", () => cancelVmotHold());
+        enBtn.addEventListener("pointercancel", () => cancelVmotHold());
+        enBtn.addEventListener("lostpointercapture", () => cancelVmotHold());
+        enBtn.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    }
+
+    if (disBtn && !disBtn.dataset.wired) {
+        disBtn.dataset.wired = "1";
+        disBtn.addEventListener("click", () => {
+            cancelVmotHold();
+            sendVmotMaster(0);
+        });
+    }
+
+    vmotEnableUi(0);
+}
 
 function resolveAlarmGuide(alarm) {
     const idNum = Number(alarm?.id);
@@ -413,11 +760,18 @@ function render(state) {
     utils.setHTML("esc", ehtml);
 
     const aa = state.alarms_active || [];
-    utils.setHTML("alarms_active", aa.length ? aa.map(a => `<div class="${a.sev >= 2 ? "bad" : "ok"}">[${utils.sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("") : `<div class="ok">none</div>`);
+    utils.setHTML("alarms_active", aa.length ? aa.map(a => {
+        const lt = Number(a?.latched) === 1 ? "LAT" : "TRN";
+        return `<div class="${a.sev >= 2 ? "bad" : "ok"}">[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
+    }).join("") : `<div class="ok">none</div>`);
 
     const hist = (state.alarms_history || []).slice(-10).reverse();
-    utils.setHTML("alarms_hist", hist.length ? hist.map(a => `<div>[${utils.sevLabel(a.sev)}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`).join("") : `<div class="ok">none</div>`);
+    utils.setHTML("alarms_hist", hist.length ? hist.map(a => {
+        const lt = Number(a?.latched) === 1 ? "LAT" : "TRN";
+        return `<div>[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
+    }).join("") : `<div class="ok">none</div>`);
     renderHelpAlarmLinks(state);
+    handleAlarmBeep(state);
 
     utils.setHTML("power_scada_badges", renderPowerScada(state));
     const mb = document.getElementById("main_power_badges");
@@ -425,6 +779,7 @@ function render(state) {
 
     if (mb) mb.innerHTML = renderPowerScada(state);
     if (ms) ms.innerHTML = scadaSvg(state);
+    renderVmotState(state);
 
     const ar = document.getElementById("att_readout");
     if (ar) {
@@ -462,26 +817,33 @@ function render(state) {
     }
 
     thrusters.renderMotorsRingsAdvanced(state);
+    highlightGpLightChannel();
 }
 
 async function init() {
     snapshot = await fetch("/api/state").then(r => r.json());
     setupTabs();
+    setupSetupTab();
     setupMissionTab();
     video.setupVideo();
+    ensureAlarmAudioUnlock();
+    setupVmotControls();
     setupHelpPanel();
     renderWidgetsMenu();
     setupWidgetsMenu();
     applyWidgetVisibility();
+    applyLightsAckVisibility();
     setupCollapseButtons();
 
     lights.setupLights && lights.setupLights();
     await lights.loadLightsCfg().catch(() => { });
+    highlightGpLightChannel();
 
     const saveBtn = document.getElementById("lgt_cfg_save");
     if (saveBtn)
         saveBtn.onclick = lights.saveLightsCfg;
     setupLightsConfigToggle();
+    setupJoystickControls();
 
     logs.setupLogs();
     await logs.refreshLogStatus().catch(() => { });
@@ -611,15 +973,17 @@ let uiPrefs = loadUiPrefs();
 uiPrefs.visible ??= Object.fromEntries(WIDGETS.map(w => [w.id, true]));
 uiPrefs.collapsed ??= {};
 uiPrefs.mainTab ??= "vehicle";
+uiPrefs.showLightsAck ??= true;
+uiPrefs.showAlarmBeep ??= true;
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.power ??= false;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.motors ??= true;
 uiPrefs.collapsed.missionlog ??= true;
 uiPrefs.lightsCfgCollapsed ??= true;
-if (uiPrefs.mainTabPresetVersion !== 2) {
-    if (uiPrefs.mainTab === "mission") uiPrefs.mainTab = "vehicle";
-    uiPrefs.mainTabPresetVersion = 2;
+if (!TAB_ORDER.includes(uiPrefs.mainTab)) uiPrefs.mainTab = "vehicle";
+if (uiPrefs.mainTabPresetVersion !== 3) {
+    uiPrefs.mainTabPresetVersion = 3;
     saveUiPrefs(uiPrefs);
 }
 if (uiPrefs.layoutPresetVersion !== 1) {
@@ -631,6 +995,61 @@ if (uiPrefs.layoutPresetVersion !== 1) {
     uiPrefs.lightsCfgCollapsed = true;
     uiPrefs.layoutPresetVersion = 1;
     saveUiPrefs(uiPrefs);
+}
+
+function setChevronState(btn, collapsed) {
+    if (!btn) return;
+    btn.classList.add("chevBtn");
+    btn.classList.toggle("is-collapsed", !!collapsed);
+    btn.setAttribute("aria-label", collapsed ? "Expand section" : "Collapse section");
+}
+
+function applyLightsAckVisibility() {
+    const ack = document.getElementById("lgt_ack");
+    if (!ack) return;
+    ack.classList.toggle("hidden", !uiPrefs.showLightsAck);
+}
+
+function applySetupUiPrefs(publishAck = true) {
+    const prevBeepEnabled = !!uiPrefs.showAlarmBeep;
+    const tabSel = document.getElementById("setup_default_tab");
+    const tab = String(tabSel?.value || "vehicle");
+    if (TAB_ORDER.includes(tab)) uiPrefs.mainTab = tab;
+
+    const lightCfg = document.getElementById("setup_lights_cfg_collapsed");
+    uiPrefs.lightsCfgCollapsed = !!lightCfg?.checked;
+    const showLightsAck = document.getElementById("setup_show_lights_ack");
+    uiPrefs.showLightsAck = !!showLightsAck?.checked;
+    const showAlarmBeep = document.getElementById("setup_alarm_beep_enabled");
+    uiPrefs.showAlarmBeep = !!showAlarmBeep?.checked;
+
+    for (const w of WIDGETS) {
+        const cb = document.getElementById(`setup_widget_${w.id}`);
+        if (cb) uiPrefs.visible[w.id] = !!cb.checked;
+    }
+
+    saveUiPrefs(uiPrefs);
+    applyWidgetVisibility();
+    applyLightsAckVisibility();
+    renderWidgetsMenu();
+
+    const wrap = utils.el("lgt_cfg_body");
+    const btn = utils.el("lgt_cfg_toggle");
+    if (wrap && btn) {
+        const hidden = !!uiPrefs.lightsCfgCollapsed;
+        wrap.classList.toggle("hidden", hidden);
+        wrap.style.display = hidden ? "none" : "";
+        setChevronState(btn, hidden);
+    }
+
+    if (!prevBeepEnabled && uiPrefs.showAlarmBeep) {
+        playAlarmBeep(true);
+    }
+
+    if (publishAck) {
+        const ack = document.getElementById("setup_ui_ack");
+        if (ack) ack.textContent = "UI settings saved.";
+    }
 }
 
 function applyWidgetVisibility() {
@@ -646,7 +1065,7 @@ function applyWidgetVisibility() {
         }
         const btn = card.querySelector('[data-collapse]');
         if (btn)
-            btn.textContent = col ? '>' : 'v';
+            setChevronState(btn, col);
     }
 }
 
@@ -700,7 +1119,7 @@ function setupCollapseButtons() {
             return;
         const isHidden = body.classList.toggle('hidden');
         body.style.display = isHidden ? 'none' : '';
-        b.textContent = isHidden ? '>' : 'v';
+        setChevronState(b, isHidden);
         const wid = b.getAttribute('data-collapse');
         if (wid) {
             uiPrefs.collapsed[wid] = isHidden;
@@ -715,6 +1134,7 @@ function renderMainSlot(tab) {
     const tw = utils.el('missionTabWrap');
     const vw = utils.el('videoWrap');
     const sw = utils.el('sonarWrap');
+    const suw = utils.el('setupWrap');
     if (mw)
         mw.classList.toggle('hidden', tab !== 'vehicle');
     if (tw)
@@ -723,6 +1143,8 @@ function renderMainSlot(tab) {
         vw.classList.toggle('hidden', tab !== 'video');
     if (sw)
         sw.classList.toggle('hidden', tab !== 'sonar');
+    if (suw)
+        suw.classList.toggle('hidden', tab !== 'setup');
     if (tab === 'vehicle') {
         th3.ensure3D();
         return;
@@ -733,6 +1155,10 @@ function renderMainSlot(tab) {
     }
     if (tab === 'video') {
         video.mountVideo(video.videoState.kind, video.videoState.url);
+        return;
+    }
+    if (tab === 'setup') {
+        syncSetupTab();
         return;
     }
 }
@@ -759,6 +1185,278 @@ function setupTabs() {
     renderMainSlot(cur);
 }
 
+function setupSetupTab() {
+    if (setupWired) return;
+    setupWired = true;
+
+    const widgetsBox = document.getElementById("setup_widgets");
+    if (widgetsBox) {
+        widgetsBox.innerHTML = WIDGETS.map((w) =>
+            `<label class="setupCheck"><input type="checkbox" id="setup_widget_${w.id}" data-wid="${w.id}"> ${w.title}</label>`
+        ).join("");
+    }
+
+    const gpTable = document.getElementById("setup_gp_table");
+    if (gpTable) {
+        gpTable.innerHTML = GP_ACTIONS.map((a) => `
+          <div class="setupGpRow">
+            <div class="setupGpLabel">${a.label}</div>
+            <select id="setup_gp_${a.key}">${gpSelectOptions(gpMap[a.key])}</select>
+          </div>
+        `).join("");
+    }
+
+    const saveUiBtn = document.getElementById("setup_ui_save");
+    if (saveUiBtn) {
+        saveUiBtn.onclick = () => applySetupUiPrefs(true);
+    }
+
+    const resetUiBtn = document.getElementById("setup_ui_reset");
+    if (resetUiBtn) {
+        resetUiBtn.onclick = () => {
+            uiPrefs.mainTab = "vehicle";
+            uiPrefs.visible = Object.fromEntries(WIDGETS.map((w) => [w.id, true]));
+            uiPrefs.collapsed.alarms = true;
+            uiPrefs.collapsed.power = false;
+            uiPrefs.collapsed.lights = false;
+            uiPrefs.collapsed.motors = true;
+            uiPrefs.collapsed.missionlog = true;
+            uiPrefs.lightsCfgCollapsed = true;
+            uiPrefs.showLightsAck = true;
+            uiPrefs.showAlarmBeep = true;
+            saveUiPrefs(uiPrefs);
+            applyWidgetVisibility();
+            applyLightsAckVisibility();
+            renderWidgetsMenu();
+            const wrap = utils.el('lgt_cfg_body');
+            const btn = utils.el('lgt_cfg_toggle');
+            if (wrap && btn) {
+                const hidden = !!uiPrefs.lightsCfgCollapsed;
+                wrap.classList.toggle('hidden', hidden);
+                wrap.style.display = hidden ? 'none' : '';
+                setChevronState(btn, hidden);
+            }
+            syncSetupTab();
+            const ack = document.getElementById("setup_ui_ack");
+            if (ack) ack.textContent = "UI settings reset to defaults.";
+        };
+    }
+
+    const saveGpBtn = document.getElementById("setup_gp_save");
+    if (saveGpBtn) {
+        saveGpBtn.onclick = () => {
+            const map = {};
+            for (const a of GP_ACTIONS) {
+                const sel = document.getElementById(`setup_gp_${a.key}`);
+                const v = Number(sel?.value);
+                map[a.key] = Number.isInteger(v) ? v : a.def;
+            }
+            saveGpMap(map);
+            syncSetupTab();
+            const ack = document.getElementById("setup_gp_ack");
+            if (ack) ack.textContent = "Joystick mapping saved.";
+        };
+    }
+
+    const resetGpBtn = document.getElementById("setup_gp_reset");
+    if (resetGpBtn) {
+        resetGpBtn.onclick = () => {
+            saveGpMap({ ...GP_DEFAULT_MAP });
+            syncSetupTab();
+            const ack = document.getElementById("setup_gp_ack");
+            if (ack) ack.textContent = "Joystick mapping reset.";
+        };
+    }
+
+    const beepTestBtn = document.getElementById("setup_alarm_beep_test");
+    if (beepTestBtn) {
+        beepTestBtn.onclick = () => {
+            ensureAlarmAudioUnlock();
+            playAlarmBeep(true);
+            const ack = document.getElementById("setup_ui_ack");
+            if (ack) ack.textContent = "Alarm beep test triggered.";
+        };
+    }
+
+    const setupAutosaveIds = [
+        "setup_default_tab",
+        "setup_lights_cfg_collapsed",
+        "setup_show_lights_ack",
+        "setup_alarm_beep_enabled",
+    ];
+    for (const id of setupAutosaveIds) {
+        const node = document.getElementById(id);
+        if (node) node.addEventListener("change", () => applySetupUiPrefs(false));
+    }
+    for (const w of WIDGETS) {
+        const cb = document.getElementById(`setup_widget_${w.id}`);
+        if (cb) cb.addEventListener("change", () => applySetupUiPrefs(false));
+    }
+
+    syncSetupTab();
+}
+
+function syncSetupTab() {
+    if (!setupWired) return;
+    applyLightsAckVisibility();
+
+    const tabSel = document.getElementById("setup_default_tab");
+    if (tabSel) tabSel.value = TAB_ORDER.includes(uiPrefs.mainTab) ? uiPrefs.mainTab : "vehicle";
+
+    const lightCfg = document.getElementById("setup_lights_cfg_collapsed");
+    if (lightCfg) lightCfg.checked = !!uiPrefs.lightsCfgCollapsed;
+    const showLightsAck = document.getElementById("setup_show_lights_ack");
+    if (showLightsAck) showLightsAck.checked = !!uiPrefs.showLightsAck;
+    const showAlarmBeep = document.getElementById("setup_alarm_beep_enabled");
+    if (showAlarmBeep) showAlarmBeep.checked = !!uiPrefs.showAlarmBeep;
+
+    for (const w of WIDGETS) {
+        const cb = document.getElementById(`setup_widget_${w.id}`);
+        if (cb) cb.checked = !!uiPrefs.visible[w.id];
+    }
+
+    for (const a of GP_ACTIONS) {
+        const sel = document.getElementById(`setup_gp_${a.key}`);
+        if (sel) sel.value = String(gpMap[a.key]);
+    }
+}
+
+function setMainTab(tab) {
+    const btn = document.querySelector(`.tab[data-tab="${tab}"]`);
+    if (btn) btn.click();
+}
+
+function cycleMainTab(delta) {
+    const cur = uiPrefs.mainTab || "vehicle";
+    const i = Math.max(0, TAB_ORDER.indexOf(cur));
+    const n = (i + delta + TAB_ORDER.length) % TAB_ORDER.length;
+    setMainTab(TAB_ORDER[n]);
+}
+
+function gamepadButtonPressed(buttons, idx) {
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    return !!buttons[idx];
+}
+
+function gamepadEdge(buttons, idx) {
+    return gamepadButtonPressed(buttons, idx) && !gpPrevButtons[idx];
+}
+
+function setGpLightChannel(ch) {
+    const n = Math.max(1, Math.min(4, Number(ch) || 1));
+    gpLightCh = n;
+    highlightGpLightChannel();
+}
+
+function highlightGpLightChannel() {
+    for (let k = 1; k <= 4; k++) {
+        const card = document.getElementById(`lgt_ch_${k}`);
+        if (!card) continue;
+        if (k === gpLightCh) {
+            card.style.outline = "2px solid rgba(45,107,255,.8)";
+            card.style.outlineOffset = "2px";
+        } else {
+            card.style.outline = "";
+            card.style.outlineOffset = "";
+        }
+    }
+}
+
+function gpCurrentDim() {
+    const slider = document.getElementById(`lgt_dim_${gpLightCh}`);
+    if (!slider) return 0;
+    const v = parseInt(slider.value || "0", 10);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1000, v)) : 0;
+}
+
+async function gpSendLight(mode) {
+    if (gpBusyLight) return;
+    gpBusyLight = true;
+    try {
+        const dim = mode === "OFF" ? 0 : gpCurrentDim();
+        await lights.sendLightsChannel(gpLightCh, mode, dim);
+    } catch (e) {
+        console.warn("gamepad lights error", e);
+    } finally {
+        gpBusyLight = false;
+    }
+}
+
+async function gpAddMarkerEvent() {
+    if (gpBusyEvent) return;
+    gpBusyEvent = true;
+    try {
+        const input = document.getElementById("mission_event_text");
+        const ack = document.getElementById("mission_event_ack");
+        const text = String(input?.value || "").trim() || `MARK joystick ${new Date().toISOString()}`;
+        await logs.apiPost("/api/log/event", { type: "MARK", text });
+        if (input) input.value = "";
+        if (ack) ack.textContent = "Evento joystick salvato.";
+        await refreshMissionTab().catch(() => { });
+    } catch (e) {
+        const ack = document.getElementById("mission_event_ack");
+        if (ack) ack.textContent = e?.message || "Errore evento joystick";
+    } finally {
+        gpBusyEvent = false;
+    }
+}
+
+async function gpToggleLogging() {
+    if (gpBusyLog) return;
+    gpBusyLog = true;
+    try {
+        const s = await fetch("/api/log/status").then((r) => r.json());
+        await logs.apiPost(s?.enabled ? "/api/log/stop" : "/api/log/start");
+        await logs.refreshLogStatus().catch(() => { });
+        await logs.refreshLogSessions().catch(() => { });
+        await refreshMissionTab().catch(() => { });
+    } catch (e) {
+        console.warn("gamepad logging error", e);
+    } finally {
+        gpBusyLog = false;
+    }
+}
+
+function setupJoystickControls() {
+    if (gpLoopStarted) return;
+    gpLoopStarted = true;
+
+    const loop = () => {
+        try {
+            const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
+            const gp = pads.find((x) => !!x);
+            if (!gp) {
+                gpPrevButtons = [];
+                const status = document.getElementById("setup_gp_status");
+                if (status) status.textContent = "No gamepad connected.";
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            const buttons = (gp.buttons || []).map((b) => !!(b && b.pressed));
+            const status = document.getElementById("setup_gp_status");
+            if (status) status.textContent = `Gamepad: ${gp.id} | buttons: ${buttons.length}`;
+
+            if (gamepadEdge(buttons, gpMap.tab_prev)) cycleMainTab(-1);
+            if (gamepadEdge(buttons, gpMap.tab_next)) cycleMainTab(1);
+            if (gamepadEdge(buttons, gpMap.light_ch_prev)) setGpLightChannel(gpLightCh - 1);
+            if (gamepadEdge(buttons, gpMap.light_ch_next)) setGpLightChannel(gpLightCh + 1);
+            if (gamepadEdge(buttons, gpMap.light_on)) gpSendLight("ON");
+            if (gamepadEdge(buttons, gpMap.light_off)) gpSendLight("OFF");
+            if (gamepadEdge(buttons, gpMap.add_mark)) gpAddMarkerEvent();
+            if (gamepadEdge(buttons, gpMap.toggle_log)) gpToggleLogging();
+            if (gamepadEdge(buttons, gpMap.tab_cycle)) cycleMainTab(1);
+
+            gpPrevButtons = buttons;
+        } catch (e) {
+            console.warn("gamepad loop error", e);
+        }
+        requestAnimationFrame(loop);
+    };
+
+    requestAnimationFrame(loop);
+}
+
 function setupLightsConfigToggle() {
     const btn = utils.el('lgt_cfg_toggle');
     const wrap = utils.el('lgt_cfg_body');
@@ -768,7 +1466,7 @@ function setupLightsConfigToggle() {
         const hidden = !!uiPrefs.lightsCfgCollapsed;
         wrap.classList.toggle('hidden', hidden);
         wrap.style.display = hidden ? 'none' : '';
-        btn.textContent = hidden ? '>' : 'v';
+        setChevronState(btn, hidden);
     };
     apply();
     btn.onclick = () => {

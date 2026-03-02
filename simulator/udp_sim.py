@@ -40,6 +40,8 @@ t0 = time.time()
 PWR_HZ = 5.0
 next_pwr = time.time()
 seq_pwr = 0
+vmot_lock = threading.Lock()
+vmot_on = [1, 1, 0, 1, 0, 0]  # VMOT1..VMOT6
 
 def ts_ms():
     return int((time.time() - t0) * 1000) & 0xFFFFFFFF
@@ -81,9 +83,21 @@ def cmd_listener():
             kv[rest[i]] = rest[i + 1]
 
         cmd_id = kv.get("CmdId", "0")
+        cmd_type = str(kv.get("Type", "")).upper()
         ok = 1
+        text = ""
+
+        if cmd_type == "VMOT_MASTER":
+            tok = str(kv.get("Enable", "0")).strip().lower()
+            enable = 1 if tok in ("1", "true", "on", "enable", "enabled") else 0
+            with vmot_lock:
+                for i in range(6):
+                    vmot_on[i] = enable
+            text = f"VMOT_{'ON' if enable else 'OFF'}"
 
         ack = f"{dst},{src},ACK,2,{seq},{ts_ms},CmdId,{cmd_id},Ok,{ok}"
+        if text:
+            ack += f",Text,{text}"
         send_line(ack)
 
 # start command listener thread (MUST be after def cmd_listener)
@@ -122,9 +136,11 @@ while True:
         seq_pwr = (seq_pwr + 1) & 0xFFFFFFFF
         dv_thr = 200
         dv = 45
+        with vmot_lock:
+            v1, v2, v3, v4, v5, v6 = vmot_on
 
-        send_line(f"BAT1,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,1,SwVbusCmd,1,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,4,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot1On,1,Vmot2On,1,Vmot3On,0")
-        send_line(f"BAT2,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,0,SwVbusCmd,0,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,3,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot4On,1,Vmot5On,0,Vmot6On,0")
+        send_line(f"BAT1,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,1,SwVbusCmd,1,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,4,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot1On,{v1},Vmot2On,{v2},Vmot3On,{v3}")
+        send_line(f"BAT2,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,0,SwVbusCmd,0,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,3,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot4On,{v4},Vmot5On,{v5},Vmot6On,{v6}")
 
         next_pwr = now + (1.0 / PWR_HZ)
 

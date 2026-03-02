@@ -1,6 +1,8 @@
 import { el as domEl } from './utils.js';
 
 export let lightsCfg = null;
+const ACK_TIMEOUT_MS = 2000;
+const ACK_POLL_MS = 120;
 
 export function parseIdsCsv(s) {
   return (s || "")
@@ -15,7 +17,7 @@ export async function loadLightsCfg() {
   lightsCfg = await fetch("/api/config/lights").then(r => r.json());
   renderLightsCfg();
   renderLightsCtrl();
-  const st = domEl("lgt_cfg_status"); if(st) st.textContent = "loaded";
+  const st = domEl("lgt_cfg_status"); if (st) st.textContent = "loaded";
 }
 
 export function renderLightsCfg() {
@@ -57,6 +59,21 @@ export async function saveLightsCfg() {
   renderLightsCtrl();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitAck(cmdId, timeoutMs = ACK_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await fetch(`/api/cmd/ack?cmd_id=${encodeURIComponent(cmdId)}`, { cache: "no-store" });
+    const j = await r.json();
+    if (j?.ok && j.status === "ack" && j.ack) return j.ack;
+    await sleep(ACK_POLL_MS);
+  }
+  return null;
+}
+
 export async function sendLightsChannel(ch, mode, dim) {
   const r = await fetch("/api/cmd/lights_channel", {
     method: "POST",
@@ -65,7 +82,30 @@ export async function sendLightsChannel(ch, mode, dim) {
   });
   const j = await r.json();
   const a = domEl("lgt_ack");
-  if (a) a.textContent = j.ok ? (`sent CmdId ${j.cmd_id} (CH${ch} → ${j.lamp_ids?.length || 0} lamps)`) : "send fail";
+  if (!a) return;
+  if (!j.ok) {
+    a.textContent = "send fail";
+    return;
+  }
+
+  a.textContent = `sent CmdId ${j.cmd_id} (CH${ch} -> ${j.lamp_ids?.length || 0} lamps)`;
+  const ack = await waitAck(j.cmd_id).catch(() => null);
+  if (!ack) {
+    a.textContent = `CmdId ${j.cmd_id}: ACK timeout`;
+    return;
+  }
+
+  const ok = Number(ack.ok) === 1;
+  const txt = ack.text ? ` (${ack.text})` : "";
+  const err = ack.err != null ? ` err:${ack.err}` : "";
+  a.textContent = ok
+    ? `ACK OK CmdId ${j.cmd_id}${txt}`
+    : `ACK ERR CmdId ${j.cmd_id}${err}${txt}`;
+}
+
+function sendByDim(ch, dim) {
+  if (!Number.isFinite(dim) || dim <= 0) return sendLightsChannel(ch, "OFF", 0);
+  return sendLightsChannel(ch, "ON", dim);
 }
 
 export function renderLightsCtrl() {
@@ -75,7 +115,7 @@ export function renderLightsCtrl() {
     const name = lightsCfg?.channels?.[k]?.name || `CH${k}`;
 
     html += `
-      <div class="lgtCh">
+      <div class="lgtCh" id="lgt_ch_${k}" data-ch="${k}">
         <div class="lgtChHead">
           <div class="lgtChName">${name}</div>
         </div>
@@ -87,9 +127,15 @@ export function renderLightsCtrl() {
           <div class="lgtVal"><span id="lgt_val_${k}">0</span></div>
         </div>
 
-        <div class="lgtBtns">
-          <button id="lgt_on_${k}">ON</button>
-          <button id="lgt_off_${k}">OFF</button>
+        <div class="lgtActions">
+          <div class="lgtPreset">
+            <select id="lgt_preset_${k}">
+              <option value="">Preset...</option>
+              <option value="250">LOW</option>
+              <option value="600">MED</option>
+              <option value="1000">HIGH</option>
+            </select>
+          </div>
         </div>
       </div>`;
   }
@@ -100,18 +146,44 @@ export function renderLightsCtrl() {
   for (const k of ["1", "2", "3", "4"]) {
     const slider = domEl(`lgt_dim_${k}`);
     const label = domEl(`lgt_val_${k}`);
-    const btnOn = domEl(`lgt_on_${k}`);
-    const btnOff = domEl(`lgt_off_${k}`);
+    const preset = domEl(`lgt_preset_${k}`);
 
-    if (!slider || !label || !btnOn || !btnOff) continue;
+    if (!slider || !label || !preset) continue;
 
-    slider.addEventListener("input", () => label.textContent = slider.value);
+    let sendTimer = null;
+    const flushSlider = () => {
+      const v = parseInt(slider.value || "0", 10);
+      sendByDim(parseInt(k, 10), v);
+    };
 
-    btnOn.onclick  = () => sendLightsChannel(parseInt(k, 10), "ON",  parseInt(slider.value, 10));
-    btnOff.onclick = () => sendLightsChannel(parseInt(k, 10), "OFF", 0);
+    slider.addEventListener("input", () => {
+      label.textContent = slider.value;
+      if (sendTimer) clearTimeout(sendTimer);
+      sendTimer = setTimeout(() => {
+        sendTimer = null;
+        flushSlider();
+      }, 120);
+    });
 
-    slider.addEventListener("change", () =>
-      sendLightsChannel(parseInt(k, 10), "ON", parseInt(slider.value, 10))
-    );
+    slider.addEventListener("change", () => {
+      if (sendTimer) {
+        clearTimeout(sendTimer);
+        sendTimer = null;
+      }
+      flushSlider();
+    });
+
+    preset.addEventListener("change", () => {
+      const v = parseInt(preset.value || "", 10);
+      if (!Number.isFinite(v)) return;
+      if (sendTimer) {
+        clearTimeout(sendTimer);
+        sendTimer = null;
+      }
+      slider.value = String(v);
+      label.textContent = slider.value;
+      sendByDim(parseInt(k, 10), v);
+      preset.value = "";
+    });
   }
 }

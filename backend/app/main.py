@@ -4,6 +4,7 @@ from curses.ascii import alt
 import io
 import logging as py_logging
 import json
+import math
 import os
 import re
 import socket
@@ -37,6 +38,8 @@ from backend.app.state import (
     init_state,
     update_state,
     next_cmd_id,
+    register_cmd,
+    get_cmd_ack_status,
     set_session_paths,
     make_sid,
     append_telemetry_csv,
@@ -54,6 +57,9 @@ UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.10")
 
 LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
 OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
+AUTOLOG_ENABLED = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
+AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
 
 MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
 MAVLINK_PORT = int(os.getenv("MAVLINK_PORT", "8080"))
@@ -118,6 +124,16 @@ def docs_json():
 # ----------------------------
 init_state(LOG_DIR)
 app_logging.init_logging(LOG_DIR, state)
+state.setdefault("autolog", {
+    "enabled": AUTOLOG_ENABLED,
+    "armed": True,
+    "depth_m": AUTOLOG_DEPTH_M,
+    "hyst_m": AUTOLOG_HYST_M,
+    "last_depth_m": None,
+    "starts": 0,
+    "last_start_sid": None,
+    "last_start_depth_m": None,
+})
 
 # ----------------------------
 # WebSocket clients
@@ -155,6 +171,33 @@ async def ws_endpoint(ws: WebSocket):
 # ----------------------------
 def now_ms() -> int:
     return int(asyncio.get_running_loop().time() * 1000) & 0xFFFFFFFF
+
+def to_float_or_none(v) -> Optional[float]:
+    try:
+        x = float(v)
+    except Exception:
+        return None
+    if not math.isfinite(x):
+        return None
+    return x
+
+def update_depth_from_alt(alt_m):
+    """Normalize MAVLink altitude to depth (down positive)."""
+    nav = state.setdefault("nav", {})
+    alt_f = to_float_or_none(alt_m)
+    if alt_f is None:
+        return
+    nav["alt_m"] = alt_f
+    nav["depth_m"] = max(0.0, -alt_f)
+
+def update_depth_from_dict(msg: dict):
+    nav = state.setdefault("nav", {})
+    for key in ("depth_m", "depth", "Depth", "DEPTH"):
+        if key in msg:
+            d = to_float_or_none(msg.get(key))
+            if d is not None:
+                nav["depth_m"] = d
+            break
 
 def build_nmea_line(fields: list[str]) -> str:
     return parser.build_nmea_line(fields)
@@ -228,6 +271,53 @@ async def offline_watchdog():
                 append_alarm_csv(alarm)
                 await ws_broadcast({"type": "alarm", "alarm": alarm})
 
+async def autolog_watchdog():
+    rearm_m = AUTOLOG_DEPTH_M + AUTOLOG_HYST_M
+    while True:
+        await asyncio.sleep(1.0)
+        if not AUTOLOG_ENABLED:
+            continue
+
+        nav = state.get("nav") or {}
+        depth = to_float_or_none(nav.get("depth_m"))
+        if depth is None:
+            continue
+
+        al = state.setdefault("autolog", {})
+        al["enabled"] = AUTOLOG_ENABLED
+        al["depth_m"] = AUTOLOG_DEPTH_M
+        al["hyst_m"] = AUTOLOG_HYST_M
+        al["last_depth_m"] = depth
+
+        if depth >= rearm_m:
+            al["armed"] = True
+
+        if state.get("logging", {}).get("enabled"):
+            continue
+
+        if al.get("armed", True) and depth < AUTOLOG_DEPTH_M:
+            sid = make_sid()
+            set_session_paths(sid)
+            state["logging"] = {"enabled": True, "sid": sid}
+
+            al["armed"] = False
+            al["starts"] = int(al.get("starts", 0)) + 1
+            al["last_start_sid"] = sid
+            al["last_start_depth_m"] = depth
+
+            append_event_jsonl({
+                "ts_ms": int(state.get("last_update_ms") or 0),
+                "mission_time": nav.get("mission_time_s"),
+                "depth": depth,
+                "heading": nav.get("heading_deg"),
+                "lat": nav.get("lat_deg"),
+                "lon": nav.get("lon_deg"),
+                "alt_m": nav.get("alt_m"),
+                "src": "SFC",
+                "type": "AUTOLOG",
+                "text": f"Auto-start logging depth<{AUTOLOG_DEPTH_M:.2f}m",
+            })
+
 # ----------------------------
 # Startup (single)
 # ----------------------------
@@ -240,6 +330,7 @@ async def startup():
 
     # background tasks
     asyncio.create_task(offline_watchdog())
+    asyncio.create_task(autolog_watchdog())
 
     # Ping360 task
     asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
@@ -259,6 +350,8 @@ async def startup():
         asyncio.create_task(mavlink_reader())
     else:
         print("[mavlink] disabled or no available transport")
+
+    # TODO(spec TODO-IMPL-MAVLINK-BRIDGE): publish selected telemetry/alarm subset to BlueOS/Cockpit once dataset is finalized.
 
 # ----------------------------
 # API
@@ -293,6 +386,7 @@ def api_health():
         "counters": state["counters"],
         "last_update_ms": state["last_update_ms"],
         "nodes": {k: {"online": v.get("online"), "last_hb_ms": v.get("last_hb_ms")} for k, v in state["nodes"].items()},
+        "autolog": state.get("autolog"),
     }
 
 @app.post("/api/cmd/lights_channel")
@@ -325,9 +419,74 @@ async def cmd_lights_channel(body: dict = Body(...)):
         "LampIds", lamp_ids_str,
     ]
     line = build_nmea_line(fields)
-    udp_tx_sock.sendto(line.encode("ascii"), (UDP_TX_HOST, UDP_TX_PORT))
+    try:
+        udp_tx_sock.sendto(line.encode("ascii"), (UDP_TX_HOST, UDP_TX_PORT))
+    except Exception as e:
+        return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
+
+    register_cmd(
+        cmd_id=cmd_id,
+        cmd_type="LIGHTS_CH",
+        dst="ROV",
+        ts_ms=ts,
+        payload={"ch": ch, "mode": mode, "dim": dim, "lamp_ids": lamp_ids},
+    )
 
     return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids}
+
+
+@app.post("/api/cmd/vmot_master")
+async def cmd_vmot_master(body: dict = Body(...)):
+    if "enable" not in body:
+        return JSONResponse({"ok": False, "err": "enable missing"}, status_code=400)
+
+    raw_enable = body.get("enable")
+    if isinstance(raw_enable, bool):
+        enable = 1 if raw_enable else 0
+    elif isinstance(raw_enable, (int, float)):
+        enable = 1 if int(raw_enable) != 0 else 0
+    elif isinstance(raw_enable, str):
+        tok = raw_enable.strip().lower()
+        if tok in ("1", "true", "on", "enable", "enabled"):
+            enable = 1
+        elif tok in ("0", "false", "off", "disable", "disabled"):
+            enable = 0
+        else:
+            return JSONResponse({"ok": False, "err": "bad enable"}, status_code=400)
+    else:
+        return JSONResponse({"ok": False, "err": "bad enable"}, status_code=400)
+
+    cmd_id = next_cmd_id()
+    ts = int(state["last_update_ms"] or 0)
+
+    fields = [
+        "SFC", "ROV", "CMD", "2",
+        str(cmd_id), str(ts),
+        "CmdId", str(cmd_id),
+        "Type", "VMOT_MASTER",
+        "Enable", str(enable),
+    ]
+    line = build_nmea_line(fields)
+    try:
+        udp_tx_sock.sendto(line.encode("ascii"), (UDP_TX_HOST, UDP_TX_PORT))
+    except Exception as e:
+        return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
+
+    register_cmd(
+        cmd_id=cmd_id,
+        cmd_type="VMOT_MASTER",
+        dst="ROV",
+        ts_ms=ts,
+        payload={"enable": enable},
+    )
+    return {"ok": True, "cmd_id": cmd_id, "enable": enable}
+
+@app.get("/api/cmd/ack")
+def api_cmd_ack(cmd_id: int):
+    if cmd_id < 0:
+        return JSONResponse({"ok": False, "err": "bad cmd_id"}, status_code=400)
+    status = get_cmd_ack_status(cmd_id)
+    return {"ok": True, "cmd_id": cmd_id, **status}
 
 @app.get("/api/config/lights")
 def api_get_lights_cfg():
@@ -800,7 +959,7 @@ async def mavlink_reader():
                 state["att"]["yaw_deg"]   = msg.yaw   * 57.295779513
             elif mt == "VFR_HUD":
                 state["nav"]["heading_deg"] = getattr(msg, "heading", None)
-                state["nav"]["alt_m"] = getattr(msg, "alt", None)
+                update_depth_from_alt(getattr(msg, "alt", None))
             elif mt == "GLOBAL_POSITION_INT":
                 lat = getattr(msg, "lat", None)
                 lon = getattr(msg, "lon", None)
@@ -814,7 +973,7 @@ async def mavlink_reader():
                 if hdg is not None and int(hdg) != 65535:
                     state["nav"]["heading_deg"] = float(hdg) / 100.0
                 if rel_alt is not None:
-                    state["nav"]["alt_m"] = float(rel_alt) / 1000.0
+                    update_depth_from_alt(float(rel_alt) / 1000.0)
 
     await asyncio.to_thread(_run)
 
@@ -855,6 +1014,8 @@ async def mavlink_ws_loop():
                         continue
 
                     msg = obj.get("message") or obj.get("mavlink") or obj
+                    if isinstance(msg, dict):
+                        update_depth_from_dict(msg)
                     mtype = msg.get("type") or msg.get("msg") or msg.get("name")
                     if not mtype:
                         continue
@@ -881,7 +1042,7 @@ async def mavlink_ws_loop():
                         if hdg is not None:
                             state["nav"]["heading_deg"] = float(hdg)
                         if alt is not None:
-                            state["nav"]["alt_m"] = float(alt)
+                            update_depth_from_alt(float(alt))
                     elif mtype == "GLOBAL_POSITION_INT":
                         # hdg in centi-deg (0..35999)
                         hdg = msg.get("hdg")
@@ -898,8 +1059,7 @@ async def mavlink_ws_loop():
                             state.setdefault("nav", {})
                             state["nav"]["lon_deg"] = float(lon) / 1e7
                         if rel_alt is not None:
-                            state.setdefault("nav", {})
-                            state["nav"]["alt_m"] = float(rel_alt) / 1000.0
+                            update_depth_from_alt(float(rel_alt) / 1000.0)
                     elif mtype == "GPS_RAW_INT":
                         lat = msg.get("lat")
                         lon = msg.get("lon")
@@ -911,8 +1071,7 @@ async def mavlink_ws_loop():
                             state.setdefault("nav", {})
                             state["nav"]["lon_deg"] = float(lon) / 1e7
                         if alt is not None:
-                            state.setdefault("nav", {})
-                            state["nav"]["alt_m"] = float(alt) / 1000.0
+                            update_depth_from_alt(float(alt) / 1000.0)
                     elif mtype == "SERVO_OUTPUT_RAW":
                         outs = [
                             msg.get("servo1_raw"),

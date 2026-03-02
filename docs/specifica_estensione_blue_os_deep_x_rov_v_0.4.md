@@ -110,6 +110,10 @@ Vantaggi:
 
 - `CMD` (SFC → ROV) – event-driven
   - Include: `CmdId` (u32), `Type` (string), payload K/V
+  - Comando sicurezza VMOT (SCADA):
+    - `Type=VMOT_MASTER`
+    - payload: `Enable` (0/1)
+    - Regola UI: enable con hold 3 secondi, disable immediato
 
 - `ACK` (ROV → SFC) – response a `CMD`
   - Include: `CmdId` (u32), `Ok` (0/1), (opz.) `Err` (u16/u32), `Text`
@@ -141,9 +145,9 @@ Per ciascun pod:
 
 Controlli:
 
-- Slider intensità (dimmer)
-- Switch ON/OFF per fari/zone
+- Slider intensità (dimmer): `0 = OFF`, `>0 = ON`
 - Selettore modalità (preset)
+- Nota allineamento UI (2026-03-02): controllo ON/OFF dedicato rimosso, comportamento implicito via slider
 
 Requisito: pieno controllo via **touch** e via **joystick** (mapping assi/pulsanti).
 
@@ -242,11 +246,19 @@ Esempio JSONL:
 
 ## 6. Open points da chiudere
 
-- Tabella completa messaggi UDP (keys, unità, scaling, rate) – da integrare dal tuo file v1
-- Porte UDP definitive e topologia rete
-- Lista sorgenti video/sonar + endpoint (WebRTC/RTSP/HLS)
-- Mapping joystick (assi/pulsanti → azioni)
-- Set dati pubblicati su MAVLink bridge
+- [TODO-INPUT-UDP-SCHEMA] Tabella completa messaggi UDP (keys, unità, scaling, rate) da integrare dal file v1 definitivo.
+- [TODO-INPUT-NET] Porte UDP definitive e topologia rete da congelare.
+- [TODO-INPUT-AV-ENDPOINTS] Lista sorgenti video/sonar + endpoint (WebRTC/RTSP/HLS).
+- [TODO-INPUT-MAVLINK-BRIDGE-DATASET] Set dati da pubblicare nel MAVLink bridge.
+- [TODO-INPUT-CMD-VMOT-TYPE] Confermare naming definitivo firmware per comando VMOT master (`Type=VMOT_MASTER`, `Enable=0/1` usato in UI attuale).
+
+### 6.1 TODO implementativi (tracciamento rapido)
+
+- [TODO-IMPL-MAVLINK-BRIDGE] Implementare pubblicazione subset dati verso ecosistema BlueOS/Cockpit una volta definito dataset.
+- [TODO-IMPL-VIDEO-SOURCES] Collegare selettore video/sonar a sorgenti reali da configurazione centralizzata.
+- [TODO-IMPL-VIDEO-DUAL] Valutare e implementare doppio stream video se pipeline disponibile.
+- [TODO-IMPL-LOG-ROTATION] Implementare rotazione log per missioni molto lunghe.
+- [TODO-IMPL-TEST-PLAN] Formalizzare piano test del §7 in checklist eseguibile.
 
 ---
 
@@ -257,4 +269,3 @@ Esempio JSONL:
 - Carico: 50 Hz + 6 ESC + logging
 - Switch video/sonar e riconnessione
 - Joystick: mapping e coerenza con UI touch
-

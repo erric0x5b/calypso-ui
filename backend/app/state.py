@@ -45,6 +45,7 @@ state.setdefault("nav", {
     "mission_time_s": None,
 })
 state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
+state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
 
 # simple command id generator
 _cmd_id = 0
@@ -104,6 +105,71 @@ def new_session_paths(sid: str) -> Tuple[str, str, str]:
 
 def make_sid() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _cmd_state() -> dict:
+    return state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
+
+
+def register_cmd(cmd_id: int, cmd_type: str, dst: str, ts_ms: int | None, payload: dict | None = None) -> None:
+    cmd = _cmd_state()
+    pending = cmd.setdefault("pending", {})
+    sid = str(int(cmd_id) & 0xFFFFFFFF)
+    pending[sid] = {
+        "cmd_id": int(cmd_id) & 0xFFFFFFFF,
+        "type": str(cmd_type or ""),
+        "dst": str(dst or ""),
+        "ts_ms": int(ts_ms or 0),
+        "payload": payload or {},
+        "status": "sent",
+    }
+    while len(pending) > 128:
+        pending.pop(next(iter(pending)))
+
+
+def record_ack(ts_ms: int, src: str, cmd_id: int, ok: int, err: int | None = None, text: str | None = None) -> dict:
+    cmd = _cmd_state()
+    pending = cmd.setdefault("pending", {})
+    history = cmd.setdefault("history", [])
+
+    ack = {
+        "ts_ms": int(ts_ms or 0),
+        "src": str(src or ""),
+        "cmd_id": int(cmd_id) & 0xFFFFFFFF,
+        "ok": 1 if int(ok or 0) != 0 else 0,
+        "err": None if err is None else int(err),
+        "text": None if text is None else str(text),
+    }
+
+    cmd["last_ack"] = ack
+    history.append(ack)
+    if len(history) > 200:
+        del history[:-200]
+
+    sid = str(ack["cmd_id"])
+    sent = pending.get(sid)
+    if sent is not None:
+        sent["status"] = "ack"
+        sent["ack"] = ack
+        cmd["last_cmd_result"] = sent
+        pending.pop(sid, None)
+    return ack
+
+
+def get_cmd_ack_status(cmd_id: int) -> dict:
+    cmd = _cmd_state()
+    sid = str(int(cmd_id) & 0xFFFFFFFF)
+    pending = cmd.get("pending", {})
+    if sid in pending:
+        return {"status": "pending", "cmd": pending[sid]}
+
+    hist = cmd.get("history", [])
+    target = int(cmd_id) & 0xFFFFFFFF
+    for ack in reversed(hist):
+        if int(ack.get("cmd_id", -1)) == target:
+            return {"status": "ack", "ack": ack}
+
+    return {"status": "unknown"}
 
 
 def append_telemetry_csv(p: dict):
@@ -198,6 +264,18 @@ def update_state(parsed: dict):
 
     if msg == "DIG" and src in state["pods"]:
         state["pods"][src].update(kv)
+        return
+
+    if msg == "ACK":
+        try:
+            cmd_id = int(kv.get("CmdId"))
+        except Exception:
+            return
+
+        ok = kv.get("Ok", 0)
+        err = kv.get("Err")
+        text = kv.get("Text")
+        record_ack(ts_ms=ts, src=src, cmd_id=cmd_id, ok=ok, err=err, text=text)
         return
 
     if msg == "ESC":

@@ -171,12 +171,14 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                 if msg_id == 2301:
                     dd = decode_ping360_auto_device_data(payload)
                     runtime["last"] = dd
-                    # manda un “delta” leggero (senza tutto lo state)
+                    # Keep a stable UI contract: kind=ping360 with normalized fields.
                     await ws_broadcast({
                         "type": "sonar",
-                        "kind": "ping360_auto_device_data",
+                        "kind": "ping360",
                         "ts_ms": runtime["last_rx_ms"],
-                        "payload": dd
+                        "angle_deg": dd.get("angle_grad", 0),
+                        "samples": dd.get("data", []),
+                        "payload": dd,
                     })
         except (BlockingIOError, InterruptedError):
             await asyncio.sleep(0.01)

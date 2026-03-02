@@ -5,11 +5,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=3">
+  <link rel="stylesheet" href="app.css?v=9">
 </head>
 
 <body>
-  <h2>calypso-ui <span id="status" class="pill">connecting…</span></h2>
+  <h2>
+    <img id="brand_logo" class="brandLogo" src="media/Logo_deepex_2026-tondo.svg" alt="DeepEx logo" />
+    <span class="brandName">Calypso-UI</span>
+    <span id="status" class="pill">connecting...</span>
+  </h2>
 
   <div class="topbar">
     <span class="pill" id="main_mode">VEHICLE</span>
@@ -18,12 +22,12 @@
       <button class="tab" data-tab="mission">MISSION</button>
       <button class="tab" data-tab="video">VIDEO</button>
       <button class="tab" data-tab="sonar">SONAR</button>
+      <button class="tab" data-tab="setup">SETUP</button>
+      <button id="btn_help" class="tabHelp">HELP</button>
     </div>
 
-    <button id="btn_help">HELP</button>
-
     <div class="widgetsMenu">
-      <button id="btn_widgets">WIDGETS ▾</button>
+      <button id="btn_widgets">WIDGETS</button>
       <div id="widgets_panel" class="dropdown hidden"></div>
     </div>
   </div>
@@ -46,7 +50,7 @@
             </div>
             <div class="cardBody">
               <div id="rov3d" class="rov3d"></div>
-              <div class="mono" id="att_readout" style="margin-top:8px;opacity:.85;">—</div>
+              <div class="mono" id="att_readout" style="margin-top:8px;opacity:.85;">-</div>
             </div>
           </div>
 
@@ -67,6 +71,19 @@
           <div class="cardBody">
             <div id="main_power_badges"></div>
             <div id="main_scada" style="margin-top:10px;"></div>
+            <div class="vmotCtrl" id="vmot_ctrl">
+              <div class="vmotRow">
+                <span class="pill mono" id="vmot_state">VMOT: -</span>
+                <span class="pill mono" id="vmot_cmd_ack">-</span>
+              </div>
+              <div class="vmotActions">
+                <button id="vmot_enable_hold" class="vmotEnableBtn" aria-label="Enable VMOT hold 3 seconds">
+                  <span class="vmotEnableFill" id="vmot_enable_fill"></span>
+                  <span class="vmotEnableText" id="vmot_enable_text">ENABLE VMOT (hold 3s)</span>
+                </button>
+                <button id="vmot_disable_now" class="vmotDisableBtn">DISABLE VMOT</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -117,7 +134,7 @@
           <div class="cardHead">
             <div class="cardTitle">VIDEO</div>
             <div class="cardActions">
-              <span class="pill" id="video_status">—</span>
+              <span class="pill" id="video_status">-</span>
             </div>
           </div>
           <div class="cardBody">
@@ -151,13 +168,75 @@
           </div>
         </div>
       </div>
+      <div id="setupWrap" class="hidden">
+        <div class="card">
+          <div class="cardHead">
+            <div class="cardTitle">Setup</div>
+          </div>
+          <div class="cardBody setupBody">
+            <div class="setupGrid">
+              <section class="setupCard">
+                <h3 class="setupTitle">UI Settings</h3>
+                <label class="setupLabel" for="setup_default_tab">Default tab</label>
+                <select id="setup_default_tab">
+                  <option value="vehicle">VEHICLE</option>
+                  <option value="mission">MISSION</option>
+                  <option value="video">VIDEO</option>
+                  <option value="sonar">SONAR</option>
+                  <option value="setup">SETUP</option>
+                </select>
+                <label class="setupCheck"><input type="checkbox" id="setup_lights_cfg_collapsed"> Lights config collapsed</label>
+                <div class="setupSectionTitle">Dock widgets</div>
+                <div id="setup_widgets" class="setupChecks"></div>
+                <div class="setupActions">
+                  <button id="setup_ui_save">Save UI</button>
+                  <button id="setup_ui_reset">Reset UI</button>
+                </div>
+                <div class="mono" id="setup_ui_ack">-</div>
+              </section>
+
+              <section class="setupCard">
+                <h3 class="setupTitle">Joystick Mapping</h3>
+                <div id="setup_gp_table" class="setupGpTable"></div>
+                <div class="setupActions">
+                  <button id="setup_gp_save">Save Mapping</button>
+                  <button id="setup_gp_reset">Reset Mapping</button>
+                </div>
+                <div class="mono" id="setup_gp_ack">-</div>
+                <div class="mono" id="setup_gp_status">No gamepad</div>
+              </section>
+
+              <section class="setupCard">
+                <h3 class="setupTitle">Lights Configuration</h3>
+                <div class="lgtCfgRow">
+                  <div><b>Config</b> <span class="pill" id="lgt_cfg_status">-</span></div>
+                  <button class="iconBtn chevBtn" id="lgt_cfg_toggle" aria-label="Collapse lights config"></button>
+                </div>
+                <div class="lgtCfgBody" id="lgt_cfg_body">
+                  <div id="lgt_cfg"></div>
+                  <button id="lgt_cfg_save" style="margin-top:10px;">Save config</button>
+                </div>
+              </section>
+
+              <section class="setupCard">
+                <h3 class="setupTitle">Debug</h3>
+                <label class="setupCheck"><input type="checkbox" id="setup_show_lights_ack"> Show lights ACK badge</label>
+                <label class="setupCheck"><input type="checkbox" id="setup_alarm_beep_enabled"> Alarm beep enabled</label>
+                <div class="setupActions">
+                  <button id="setup_alarm_beep_test">TEST BEEP</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     <div id="dock" class="dock">
       <div class="card widget" data-widget="alarms">
         <div class="cardHead">
           <div class="cardTitle">Allarmi</div>
           <div class="cardActions">
-            <button class="iconBtn" data-collapse="alarms">▾</button>
+            <button class="iconBtn chevBtn" data-collapse="alarms" aria-label="Collapse alarms"></button>
           </div>
         </div>
         <div class="cardBody">
@@ -172,7 +251,7 @@
         <div class="cardHead">
           <div class="cardTitle">Status</div>
           <div class="cardActions">
-            <button class="iconBtn" data-collapse="power">▾</button>
+            <button class="iconBtn chevBtn" data-collapse="power" aria-label="Collapse status"></button>
           </div>
         </div>
         <div class="cardBody">
@@ -185,27 +264,15 @@
         <div class="cardHead">
           <div class="cardTitle">Luci</div>
           <div class="cardActions">
-            <button class="iconBtn" data-collapse="lights">▾</button>
-            <span class="pill" id="lgt_ack">—</span>
+            <span class="pill" id="lgt_ack"></span>
+            <button class="iconBtn chevBtn" data-collapse="lights" aria-label="Collapse lights"></button>
           </div>
         </div>
 
         <div class="cardBody">
           <div class="lgtWrap">
-
-            <div class="lgtCfgRow">
-              <div><b>Config</b> <span class="pill" id="lgt_cfg_status">—</span></div>
-              <button class="iconBtn" id="lgt_cfg_toggle">▾</button>
-            </div>
-
-            <div class="lgtCfgBody" id="lgt_cfg_body">
-              <div id="lgt_cfg"></div>
-              <button id="lgt_cfg_save" style="margin-top:10px;">Save config</button>
-            </div>
-
             <div style="margin-top:6px;"><b>Controllo</b></div>
             <div id="lgt_ctrl" style="margin-top:8px;"></div>
-
           </div>
         </div>
       </div>
@@ -214,7 +281,7 @@
         <div class="cardHead">
           <div class="cardTitle">Motori</div>
           <div class="cardActions">
-            <button class="iconBtn" data-collapse="motors">▾</button>
+            <button class="iconBtn chevBtn" data-collapse="motors" aria-label="Collapse motors"></button>
           </div>
         </div>
         <div class="cardBody">
@@ -226,14 +293,14 @@
         <div class="cardHead">
           <div class="cardTitle">Mission Log</div>
           <div class="cardActions">
-            <button class="iconBtn" data-collapse="missionlog">▾</button>
+            <button class="iconBtn chevBtn" data-collapse="missionlog" aria-label="Collapse mission log"></button>
           </div>
         </div>
         <div class="cardBody">
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button id="log_start">START</button>
             <button id="log_stop">STOP</button>
-            <span class="pill mono" id="log_status">—</span>
+            <span class="pill mono" id="log_status">-</span>
             <button class="logActionBtn" id="log_download" style="pointer-events:none;opacity:.5;" disabled>DOWNLOAD</button>
             <button class="logActionBtn" id="log_delete" style="pointer-events:none;opacity:.5;" disabled>DELETE</button>
             <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
@@ -241,7 +308,7 @@
               <button id="log_note_add">ADD</button>
             </div>
           </div>
-          <div style="margin-top:10px;" id="log_sessions">—</div>
+          <div style="margin-top:10px;" id="log_sessions">-</div>
         </div>
       </div>
     </div>
@@ -284,8 +351,8 @@
     }
   }
   </script>
-  <script type="module" src="three_boot.js?v=3"></script>
-  <script type="module" src="js/main.js?v=3"></script>
+  <script type="module" src="three_boot.js?v=9"></script>
+  <script type="module" src="js/main.js?v=9"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 

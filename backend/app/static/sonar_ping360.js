@@ -29,12 +29,15 @@ window.sonarPing360 = (function(){
   }
 
   function apply(msg){
-    // msg: {type:"sonar", kind:"ping360", angle_deg, samples:[...], range_m}
+    // msg: {type:"sonar", kind:"ping360", angle_deg, samples:[...], ...}
+    // fallback supported: kind "ping360_auto_device_data" with payload{angle_grad,data}
     if(!ctx && !init()) return;
-    if(msg.kind !== "ping360") return;
+    if(msg.kind !== "ping360" && msg.kind !== "ping360_auto_device_data") return;
 
-    const ang = (msg.angle_deg || 0) * Math.PI / 200; // Ping360 spesso 0..399 -> 400 step = 2π
-    const samples = msg.samples || [];
+    const fromPayload = msg.kind === "ping360_auto_device_data";
+    const angleGrad = fromPayload ? (msg?.payload?.angle_grad || 0) : (msg.angle_deg || 0);
+    const samples = fromPayload ? (msg?.payload?.data || []) : (msg.samples || []);
+    const ang = Number(angleGrad) * Math.PI / 200; // 0..399 grad -> 2π
     const n = samples.length || 1;
 
     // disegna una “riga” radiale

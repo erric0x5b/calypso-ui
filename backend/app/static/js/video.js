@@ -11,6 +11,7 @@ export function loadVideoPrefs(){
 export function saveVideoPrefs(){ localStorage.setItem("calypso_video", JSON.stringify(videoState)); }
 
 export function setupVideo(){
+  // TODO(spec TODO-IMPL-VIDEO-SOURCES): load real camera/sonar endpoints from centralized config when available.
   const src = el("video_source");
   const url = el("video_url");
   const apply = el("video_apply");
