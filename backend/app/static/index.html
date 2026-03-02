@@ -325,16 +325,40 @@
       </div>
       <div class="cardBody">
         <div class="mono" style="margin-bottom:10px;">
-          Questa guida riassume gli allarmi piu comuni e come interpretarli. Usa la scheda Allarmi per il dettaglio live.
+          Questa guida riassume allarmi e diagnostica power/VMOT. Severita ALM: 1=INFO, 2=WARN, 3=ERROR, 4=CRIT.
         </div>
         <table>
           <tr><th>ID / Pattern</th><th>Cosa significa</th><th>Azione consigliata</th></tr>
+          <tr><td>100 I2C_ERROR</td><td>Errore comunicazione I2C locale.</td><td>Verifica bus I2C e periferiche collegate.</td></tr>
+          <tr><td>110 PEER_LOST</td><td>Nodo peer non raggiungibile.</td><td>Controlla heartbeat peer e link BAT1-BAT2.</td></tr>
+          <tr><td>120 CAN_BUS</td><td>Anomalia bus CAN.</td><td>Controlla terminazioni, cablaggio e ESC.</td></tr>
+          <tr><td>200 LEAK</td><td>Leak sensor attivo.</td><td>Metti in sicurezza il ROV e verifica infiltrazioni.</td></tr>
+          <tr><td>210 OVERTEMP</td><td>Temperatura oltre soglia.</td><td>Riduci carico e controlla dissipazione.</td></tr>
+          <tr><td>300 VBUS_LOW</td><td>VBUS sotto soglia.</td><td>Controlla batterie, carico e potenza.</td></tr>
+          <tr><td>310 DV_HIGH</td><td>Delta tensione batterie troppo alto.</td><td>Non forzare parallelo, equalizza batterie.</td></tr>
+          <tr><td>320 PWR_FAULT</td><td>Fault logica power switch.</td><td>Leggi Reason/VmotReason e rimuovi causa.</td></tr>
+          <tr><td>400+id VESC_LOST</td><td>Telemetria persa su ESC specifico.</td><td>Verifica ESC indicato, CAN e alimentazione.</td></tr>
           <tr><td>NODE_OFFLINE:BAT1/BAT2</td><td>Nodo senza heartbeat oltre OFFLINE_MS.</td><td>Verifica alimentazione POD e link comunicazione.</td></tr>
           <tr><td>BusConn OFF (POD online)</td><td>POD attivo ma non collegato al bus.</td><td>Controlla contattori, comandi bus e protezioni.</td></tr>
-          <tr><td>FAULT power (Reason != 0)</td><td>Fault interno logica power.</td><td>Leggi Reason e ripristina la condizione prima del re-enable.</td></tr>
+          <tr><td>FAULT power/VMOT (Reason=900 o VmotReason!=0)</td><td>Fault logica power o sequenza VMOT.</td><td>Leggi Reason/VmotReason e ripristina la condizione prima del re-enable.</td></tr>
           <tr><td>dV oltre soglia</td><td>Delta tensione tra POD sopra dV_thr_mv.</td><td>Evita parallelo e riallinea stato carica batterie.</td></tr>
           <tr><td>ESC Fault / Motor Error</td><td>Errore su ESC o linea motore.</td><td>Riduci carico, identifica ESC e verifica temperatura/corrente.</td></tr>
           <tr><td>VBUS basso/instabile</td><td>Tensione bus fuori range o non stabile.</td><td>Controlla carico, cavi potenza e stato POD.</td></tr>
+        </table>
+        <div class="mono" style="margin-top:10px;">
+          Comandi: VMOT usa CMD Type=VMOT con ACK; bridge luci (Type=LGT) viene inoltrato senza ACK firmware.
+        </div>
+        <div style="margin-top:10px;"><b>VMOT Reason Codes</b></div>
+        <table>
+          <tr><th>Code</th><th>Nome</th><th>Significato</th></tr>
+          <tr><td>0</td><td>VMOT_REASON_OK</td><td>Sequenza VMOT completata senza errori.</td></tr>
+          <tr><td>1</td><td>VMOT_REASON_IO_NOT_READY</td><td>I/O non pronto all'avvio sequenza VMOT.</td></tr>
+          <tr><td>101</td><td>VMOT_REASON_CH1_RDY_FAIL</td><td>CH1 acceso ma VMotRdy non valido.</td></tr>
+          <tr><td>102</td><td>VMOT_REASON_CH2_RDY_FAIL</td><td>CH2 acceso ma VMotRdy non valido.</td></tr>
+          <tr><td>103</td><td>VMOT_REASON_CH3_RDY_FAIL</td><td>CH3 acceso ma VMotRdy non valido.</td></tr>
+          <tr><td>201</td><td>VMOT_REASON_CH1_FAULT</td><td>Fault rilevato su CH1.</td></tr>
+          <tr><td>202</td><td>VMOT_REASON_CH2_FAULT</td><td>Fault rilevato su CH2.</td></tr>
+          <tr><td>203</td><td>VMOT_REASON_CH3_FAULT</td><td>Fault rilevato su CH3.</td></tr>
         </table>
         <div style="margin-top:10px;"><b>Allarmi Attivi Mappati</b></div>
         <div id="help_alarm_links" class="mono" style="margin-top:6px;">Nessun allarme attivo.</div>

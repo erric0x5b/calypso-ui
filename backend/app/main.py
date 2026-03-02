@@ -495,11 +495,14 @@ async def cmd_lights_channel(body: dict = Body(...)):
     ch = int(body.get("ch", 1))
     mode = str(body.get("mode", "ON")).upper()
     dim = int(body.get("dim", 0))
+    dst = str(body.get("dst", "ALL")).strip().upper()
 
     if ch not in (1, 2, 3, 4):
         return {"ok": False, "err": "bad ch"}
     if mode not in ("ON", "OFF", "TEST"):
         return {"ok": False, "err": "bad mode"}
+    if dst != "ALL" and not dst.startswith("LGT"):
+        return {"ok": False, "err": "bad dst"}
     dim = max(0, min(1000, dim))
 
     cfg = load_lights_cfg()
@@ -510,10 +513,10 @@ async def cmd_lights_channel(body: dict = Body(...)):
     ts = int(state["last_update_ms"] or 0)
 
     fields = [
-        "SFC", "ROV", "CMD", "2",
+        "SFC", dst, "CMD", "2",
         str(cmd_id), str(ts),
         "CmdId", str(cmd_id),
-        "Type", "LIGHTS_CH",
+        "Type", "LGT",
         "Ch", str(ch),
         "Mode", mode,
         "Dim", str(dim),
@@ -525,47 +528,33 @@ async def cmd_lights_channel(body: dict = Body(...)):
     except Exception as e:
         return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
 
-    register_cmd(
-        cmd_id=cmd_id,
-        cmd_type="LIGHTS_CH",
-        dst="ROV",
-        ts_ms=ts,
-        payload={"ch": ch, "mode": mode, "dim": dim, "lamp_ids": lamp_ids},
-    )
-
-    return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids}
+    # Firmware light bridge forwards this command to RS485 without generating ACK.
+    return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids, "await_ack": False}
 
 
 @app.post("/api/cmd/vmot_master")
+@app.post("/api/cmd/vmot")
 async def cmd_vmot_master(body: dict = Body(...)):
-    if "enable" not in body:
-        return JSONResponse({"ok": False, "err": "enable missing"}, status_code=400)
-
-    raw_enable = body.get("enable")
-    if isinstance(raw_enable, bool):
-        enable = 1 if raw_enable else 0
-    elif isinstance(raw_enable, (int, float)):
-        enable = 1 if int(raw_enable) != 0 else 0
-    elif isinstance(raw_enable, str):
-        tok = raw_enable.strip().lower()
-        if tok in ("1", "true", "on", "enable", "enabled"):
-            enable = 1
-        elif tok in ("0", "false", "off", "disable", "disabled"):
-            enable = 0
-        else:
-            return JSONResponse({"ok": False, "err": "bad enable"}, status_code=400)
-    else:
-        return JSONResponse({"ok": False, "err": "bad enable"}, status_code=400)
+    raw_on = body.get("on", body.get("enable", body.get("val")))
+    if raw_on is None:
+        return JSONResponse({"ok": False, "err": "on missing"}, status_code=400)
+    norm_on = normalize_bool01(raw_on)
+    if norm_on is None:
+        return JSONResponse({"ok": False, "err": "bad on"}, status_code=400)
+    on = int(norm_on)
+    dst = str(body.get("dst", "ALL")).strip().upper()
+    if dst not in ("BAT1", "BAT2", "ALL"):
+        return JSONResponse({"ok": False, "err": "bad dst"}, status_code=400)
 
     cmd_id = next_cmd_id()
     ts = int(state["last_update_ms"] or 0)
 
     fields = [
-        "SFC", "ROV", "CMD", "2",
+        "SFC", dst, "CMD", "2",
         str(cmd_id), str(ts),
         "CmdId", str(cmd_id),
-        "Type", "VMOT_MASTER",
-        "Enable", str(enable),
+        "Type", "VMOT",
+        "On", str(on),
     ]
     line = build_nmea_line(fields)
     try:
@@ -575,12 +564,12 @@ async def cmd_vmot_master(body: dict = Body(...)):
 
     register_cmd(
         cmd_id=cmd_id,
-        cmd_type="VMOT_MASTER",
-        dst="ROV",
+        cmd_type="VMOT",
+        dst=dst,
         ts_ms=ts,
-        payload={"enable": enable},
+        payload={"on": on},
     )
-    return {"ok": True, "cmd_id": cmd_id, "enable": enable}
+    return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst}
 
 @app.get("/api/cmd/ack")
 def api_cmd_ack(cmd_id: int):

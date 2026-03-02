@@ -23,10 +23,17 @@ export function setHTML(id, html){
 }
 
 export function sevLabel(sev) {
-  if (sev == 3) return "CRIT";
-  if (sev == 2) return "ERR";
-  if (sev == 1) return "WARN";
+  if (sev == 4) return "CRIT";
+  if (sev == 3) return "ERROR";
+  if (sev == 2) return "WARN";
   return "INFO";
+}
+
+export function sevClass(sev) {
+  const s = Number(sev);
+  if (s >= 3) return "bad";
+  if (s === 2) return "warn";
+  return "ok";
 }
 
 export function pill(on, label) {
@@ -47,14 +54,28 @@ export function vmotRow(d, keys) {
 
 export function parStateLabel(x) {
   const m = {
-    0: "INIT",
-    1: "CHECK_DV",
-    2: "PRECHARGE",
-    3: "RUN_PAR_DISABLED",
-    4: "RUN_PAR_ENABLED",
-    5: "FAULT_DV_HIGH",
-    6: "FAULT_NODE",
-    7: "MANUAL_LOCKOUT"
+    0: "OFF",
+    1: "BOOT",
+    2: "WAIT_PEER",
+    3: "ISOLATED_SELF",
+    4: "ISOLATED_PEER",
+    5: "PARALLEL_ON",
+    6: "FAULT",
+    7: "HANDOFF"
   };
-  return m[x] || `STATE_${x ?? "?"}`;
+  return m[x] || `PAR_${x ?? "?"}`;
+}
+
+export function vmotReasonLabel(v) {
+  const m = {
+    0: "VMOT_REASON_OK",
+    1: "VMOT_REASON_IO_NOT_READY",
+    101: "VMOT_REASON_CH1_RDY_FAIL",
+    102: "VMOT_REASON_CH2_RDY_FAIL",
+    103: "VMOT_REASON_CH3_RDY_FAIL",
+    201: "VMOT_REASON_CH1_FAULT",
+    202: "VMOT_REASON_CH2_FAULT",
+    203: "VMOT_REASON_CH3_FAULT",
+  };
+  return m[v] || `VMOT_REASON_${v ?? "?"}`;
 }

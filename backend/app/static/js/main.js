@@ -53,6 +53,46 @@ const GP_DEFAULT_MAP = Object.fromEntries(GP_ACTIONS.map((x) => [x.key, x.def]))
 let gpMap = loadGpMap();
 
 const ALARM_GUIDE_BY_ID = {
+    100: {
+        label: "ALM_I2C_ERROR",
+        meaning: "Errore bus I2C locale (sensori/IO expander).",
+        action: "Controlla cablaggio I2C, alimentazioni periferiche e riprova."
+    },
+    110: {
+        label: "ALM_PEER_LOST",
+        meaning: "Heartbeat nodo peer non ricevuto entro timeout.",
+        action: "Verifica link tra BAT1/BAT2, alimentazione peer e stato rete."
+    },
+    120: {
+        label: "ALM_CAN_BUS",
+        meaning: "Errore comunicazione CAN verso ESC/periferiche.",
+        action: "Controlla terminazioni CAN, cablaggio e stato ESC."
+    },
+    200: {
+        label: "ALM_LEAK",
+        meaning: "Ingresso leak attivo.",
+        action: "Metti in sicurezza il ROV, verifica sensore leak e infiltrazioni."
+    },
+    210: {
+        label: "ALM_OVERTEMP",
+        meaning: "Temperatura oltre soglia di sicurezza.",
+        action: "Riduci carico, aumenta raffreddamento e verifica sensori termici."
+    },
+    300: {
+        label: "ALM_VBUS_LOW",
+        meaning: "VBUS sotto soglia.",
+        action: "Controlla batterie, carico e connessioni di potenza."
+    },
+    310: {
+        label: "ALM_DV_HIGH",
+        meaning: "Delta tensione BAT1-BAT2 oltre soglia.",
+        action: "Evita parallelo, equalizza batterie e verifica misura dV."
+    },
+    320: {
+        label: "ALM_PWR_FAULT",
+        meaning: "Fault logica power switch/PowerSM.",
+        action: "Leggi Reason/VmotReason, rimuovi causa e poi riabilita."
+    },
     9001: {
         label: "NODE_OFFLINE",
         meaning: "Nodo offline: heartbeat assente oltre la soglia OFFLINE_MS.",
@@ -61,6 +101,24 @@ const ALARM_GUIDE_BY_ID = {
 };
 
 const ALARM_GUIDE_BY_TEXT = [
+    {
+        rx: /I2C|SDA|SCL/i,
+        label: "I2C error",
+        meaning: "Anomalia comunicazione I2C locale.",
+        action: "Verifica bus, pull-up e periferiche condivise."
+    },
+    {
+        rx: /PEER|HEARTBEAT|OFFLINE/i,
+        label: "Peer offline",
+        meaning: "Nodo remoto non aggiornato o assente.",
+        action: "Controlla stato peer BAT1/BAT2 e comunicazione tra nodi."
+    },
+    {
+        rx: /LEAK|WATER|INTRUSION/i,
+        label: "Leak",
+        meaning: "Possibile infiltrazione rilevata.",
+        action: "Metti in sicurezza il sistema e verifica immediatamente il leak sensor."
+    },
     {
         rx: /BUSCONN|BUS OFF|BUS OFFLINE/i,
         label: "BusConn OFF",
@@ -222,10 +280,16 @@ function renderVmotState(state) {
     const out = document.getElementById("vmot_state");
     if (!out) return;
 
+    const b1 = state?.pods?.BAT1 || {};
+    const b2 = state?.pods?.BAT2 || {};
     const bits = vmotBits(state);
     const onCount = bits.filter(Boolean).length;
     const allOn = onCount === 6;
     const allOff = onCount === 0;
+    const vmotReason1 = Number(b1.VmotReason ?? 0);
+    const vmotReason2 = Number(b2.VmotReason ?? 0);
+    const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
+    const reasonSuffix = vmotReason === 0 ? "" : ` - ${utils.vmotReasonLabel(vmotReason)}`;
 
     out.classList.remove("vmotOn", "vmotOff", "vmotPartial");
     if (allOn) out.classList.add("vmotOn");
@@ -233,10 +297,10 @@ function renderVmotState(state) {
     else out.classList.add("vmotPartial");
 
     out.textContent = allOn
-        ? "VMOT: ENABLED (6/6)"
+        ? `VMOT: ENABLED (6/6)${reasonSuffix}`
         : allOff
-            ? "VMOT: DISABLED (0/6)"
-            : `VMOT: PARTIAL (${onCount}/6)`;
+            ? `VMOT: DISABLED (0/6)${reasonSuffix}`
+            : `VMOT: PARTIAL (${onCount}/6)${reasonSuffix}`;
 }
 
 function renderVmotCockpitWarning(state) {
@@ -304,10 +368,10 @@ async function sendVmotMaster(enable) {
     try {
         const en = Number(enable) === 1 ? 1 : 0;
         vmotAckText(`VMOT ${en ? "ENABLE" : "DISABLE"}: sending...`);
-        const r = await fetch("/api/cmd/vmot_master", {
+        const r = await fetch("/api/cmd/vmot", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enable: en }),
+            body: JSON.stringify({ on: en, dst: "ALL" }),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok || !j?.ok) {
@@ -420,6 +484,14 @@ function resolveAlarmGuide(alarm) {
     const idNum = Number(alarm?.id);
     if (Number.isFinite(idNum) && ALARM_GUIDE_BY_ID[idNum]) {
         return ALARM_GUIDE_BY_ID[idNum];
+    }
+    if (Number.isFinite(idNum) && idNum >= 401 && idNum <= 499) {
+        const escId = idNum - 400;
+        return {
+            label: "ALM_VESC_LOST",
+            meaning: `Telemetria persa su ESC ${escId}.`,
+            action: "Controlla alimentazione ESC, linea CAN e stato controller."
+        };
     }
 
     const txt = String(alarm?.text || "");
@@ -784,7 +856,7 @@ function render(state) {
     const aa = state.alarms_active || [];
     utils.setHTML("alarms_active", aa.length ? aa.map(a => {
         const lt = Number(a?.latched) === 1 ? "LAT" : "TRN";
-        return `<div class="${a.sev >= 2 ? "bad" : "ok"}">[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
+        return `<div class="${utils.sevClass(a.sev)}">[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
     }).join("") : `<div class="ok">none</div>`);
 
     const hist = (state.alarms_history || []).slice(-10).reverse();

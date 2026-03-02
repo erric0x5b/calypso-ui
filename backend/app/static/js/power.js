@@ -1,4 +1,4 @@
-import { fmtV, fmtA, fmtC, pill, vmotRow } from "./utils.js";
+import { fmtV, fmtA, fmtC, parStateLabel, vmotReasonLabel } from "./utils.js";
 
 export function renderPowerScada(state){
   const b1 = state.pods?.BAT1 || {};
@@ -14,10 +14,16 @@ export function renderPowerScada(state){
 
   const dv = (b1.dV_mv ?? b2.dV_mv);
   const dvThr = (b1.dV_thr_mv ?? b2.dV_thr_mv);
-  const reason = (b1.Reason ?? b2.Reason ?? 0);
+  const reason = Number(b1.Reason ?? b2.Reason ?? 0);
+  const parState = (b1.ParState ?? b2.ParState);
+  const parStateTxt = parStateLabel(parState);
+  const vmotReason1 = Number(b1.VmotReason ?? 0);
+  const vmotReason2 = Number(b2.VmotReason ?? 0);
+  const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
+  const vmotReasonTxt = vmotReasonLabel(vmotReason);
 
   const dvBad = (dv != null && dvThr != null) ? (Number(dv) > Number(dvThr)) : false;
-  const powerFault = (Number(reason) !== 0) || dvBad;
+  const powerFault = (reason === 900) || (vmotReason !== 0) || dvBad;
   const alarmsActive = Array.isArray(state.alarms_active) ? state.alarms_active.length : 0;
   const hasFault = powerFault || alarmsActive > 0;
 
@@ -53,7 +59,7 @@ export function renderPowerScada(state){
   const vbusKind = hasFault ? "bad" : (vbusOn ? "ok" : "warn");
   const faultKind = hasFault ? "bad" : "ok";
   const faultText = hasFault
-    ? `FAULT/ALARM (${alarmsActive}) - vedi scheda Allarmi`
+    ? `FAULT/ALARM (${alarmsActive}) PWR:${reason} VMOT:${vmotReason} - vedi scheda Allarmi`
     : "No fault / no alarm";
 
     return `
@@ -61,6 +67,8 @@ export function renderPowerScada(state){
       ${badge(podKind(online1, bus1), `POD1 ${podText(online1, bus1)}`)}
       ${badge(podKind(online2, bus2), `POD2 ${podText(online2, bus2)}`)}
       ${badge(vbusKind, `VBUS ${vbusTxt}`)}
+      ${badge(hasFault ? "bad" : "info", `PAR ${parStateTxt}`)}
+      ${badge(vmotReason === 0 ? "ok" : "bad", `VMOT ${vmotReasonTxt}`)}
       ${badge(faultKind, faultText)}
       ${socEstAny ? badge("warn", "SOC stimato da Vbatt (LiFePO4 14S)") : ""}
     </div>
@@ -86,7 +94,7 @@ export function scadaSvg(s) {
   const n1 = (s.nodes?.BAT1) || {};
   const n2 = (s.nodes?.BAT2) || {};
 
-  const busOn = ((b1.VbusOn ?? b2.VbusOn) ? 1 : 0);
+  const busOn = ((b1.VbusOn === 1 || b1.VbusOn === "1") || (b2.VbusOn === 1 || b2.VbusOn === "1")) ? 1 : 0;
   const vbus = (b1.Vbus_mv ?? b2.Vbus_mv);
 
   const c1 = (b1.bus_conn === 1 || b1.bus_conn === "1" || b1.BusConn === 1 || b1.BusConn === "1");
@@ -115,9 +123,15 @@ export function scadaSvg(s) {
 
   const dv = (b1.dV_mv ?? b2.dV_mv);
   const dvThr = (b1.dV_thr_mv ?? b2.dV_thr_mv);
-  const reason = (b1.Reason ?? b2.Reason ?? 0);
+  const reason = Number(b1.Reason ?? b2.Reason ?? 0);
+  const parState = (b1.ParState ?? b2.ParState);
+  const parStateTxt = parStateLabel(parState);
+  const vmotReason1 = Number(b1.VmotReason ?? 0);
+  const vmotReason2 = Number(b2.VmotReason ?? 0);
+  const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
+  const vmotReasonTxt = vmotReasonLabel(vmotReason);
   const dvBad = (dv != null && dvThr != null) ? (Number(dv) > Number(dvThr)) : false;
-  const fault = (Number(reason) !== 0) || dvBad;
+  const fault = (reason === 900) || (vmotReason !== 0) || dvBad;
 
   const colOn = "#22c55e";
   const colWarn = "#f59e0b";
@@ -297,7 +311,10 @@ export function scadaSvg(s) {
     <text x="${VBUS_CX}" y="125" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">VBUS</text>
     <text x="${VBUS_CX}" y="150" font-size="14" fill="${tMuted}" text-anchor="middle">Vbus: ${vbusTxt}</text>
     <text x="${VBUS_CX}" y="175" font-size="14" fill="${tMuted}" text-anchor="middle">
-      ${fault ? `FAULT (Reason ${reason}${dvBad ? `, ΔV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"}`}
+      ${fault ? `FAULT (PWR ${reason}, VMOT ${vmotReason}${dvBad ? `, dV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"} - ${parStateTxt}`}
+    </text>
+    <text x="${VBUS_CX}" y="194" font-size="12" fill="${tMuted}" text-anchor="middle">
+      VMOT reason: ${vmotReasonTxt}
     </text>
 
     <!-- Lines -->

@@ -78,7 +78,7 @@ export async function sendLightsChannel(ch, mode, dim) {
   const r = await fetch("/api/cmd/lights_channel", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ch, mode, dim })
+    body: JSON.stringify({ ch, mode, dim, dst: "ALL" })
   });
   const j = await r.json();
   const a = domEl("lgt_ack");
@@ -89,6 +89,11 @@ export async function sendLightsChannel(ch, mode, dim) {
   }
 
   a.textContent = `sent CmdId ${j.cmd_id} (CH${ch} -> ${j.lamp_ids?.length || 0} lamps)`;
+  if (j.await_ack === false) {
+    a.textContent = `forwarded CmdId ${j.cmd_id} (CH${ch} -> ${j.lamp_ids?.length || 0} lamps)`;
+    return;
+  }
+
   const ack = await waitAck(j.cmd_id).catch(() => null);
   if (!ack) {
     a.textContent = `CmdId ${j.cmd_id}: ACK timeout`;

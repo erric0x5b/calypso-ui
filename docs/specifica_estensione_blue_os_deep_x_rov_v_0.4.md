@@ -91,12 +91,11 @@ Vantaggi:
     - `SwVbusCmd` (0/1) *(comando logico richiesto dal micro)*
     - `VbusOn` (0/1)
     - `Vbus_mv` (mV) *(se misurabile)*
-    - `VcpuOn` (0/1) *(opzionale)*
-    - `VeletOn` (0/1) *(opzionale)*
     - `ParState` (u8 enum)
     - `dV_thr_mv` (mV)
     - `dV_mv` (mV)
     - `Reason` (u16/u32) *(codice motivo blocco)*
+    - `VmotReason` (u32 enum) *(reason code sequenza/fault VMOT)*
     - **VMOT enable (solo SCADA):**
       - BAT1: `Vmot1On`, `Vmot2On`, `Vmot3On` (0/1)
       - BAT2: `Vmot4On`, `Vmot5On`, `Vmot6On` (0/1)
@@ -106,13 +105,13 @@ Vantaggi:
   - Keys minime: `VescId` (1..6), `RPM`, `InVoltage_mv`, `AvgInCur_ma`, `Wh_x10`
 
 - `ALM` (Any → SFC) – event-driven + repeat (rate ridotto)
-  - Keys minime: `Id`, `Sev` (0..3), `Active` (0/1), `Latched` (0/1), `Text` (string) / `TextB64`
+  - Keys minime: `Id`, `Sev` (1..4), `Active` (0/1), `Latched` (0/1), `Text` (string) / `TextB64`
 
 - `CMD` (SFC → ROV) – event-driven
   - Include: `CmdId` (u32), `Type` (string), payload K/V
   - Comando sicurezza VMOT (SCADA):
-    - `Type=VMOT_MASTER`
-    - payload: `Enable` (0/1)
+    - `Type=VMOT`
+    - payload: `On` (0/1) oppure alias `Val`
     - Regola UI: enable con hold 3 secondi, disable immediato (touch + joystick)
   - Tracciamento MAVLink:
     - da `HEARTBEAT`: `MAV_MODE_SAFETY_ARMED`
@@ -256,7 +255,7 @@ Esempio JSONL:
 - [TODO-INPUT-NET] Porte UDP definitive e topologia rete da congelare.
 - [TODO-INPUT-AV-ENDPOINTS] Lista sorgenti video/sonar + endpoint (WebRTC/RTSP/HLS).
 - [TODO-INPUT-MAVLINK-BRIDGE-DATASET] Set dati da pubblicare nel MAVLink bridge.
-- [TODO-INPUT-CMD-VMOT-TYPE] Confermare naming definitivo firmware per comando VMOT master (`Type=VMOT_MASTER`, `Enable=0/1` usato in UI attuale).
+- [DONE-CMD-VMOT-TYPE] Allineato a firmware: `Type=VMOT` con `On/Val` e `DST=BAT1|BAT2|ALL`.
 
 ### 6.1 TODO implementativi (tracciamento rapido)
 

@@ -87,8 +87,8 @@ def cmd_listener():
         ok = 1
         text = ""
 
-        if cmd_type == "VMOT_MASTER":
-            tok = str(kv.get("Enable", "0")).strip().lower()
+        if cmd_type in ("VMOT", "VMOT_MASTER"):
+            tok = str(kv.get("On", kv.get("Enable", kv.get("Val", "0")))).strip().lower()
             enable = 1 if tok in ("1", "true", "on", "enable", "enabled") else 0
             with vmot_lock:
                 for i in range(6):
@@ -139,8 +139,8 @@ while True:
         with vmot_lock:
             v1, v2, v3, v4, v5, v6 = vmot_on
 
-        send_line(f"BAT1,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,1,SwVbusCmd,1,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,4,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot1On,{v1},Vmot2On,{v2},Vmot3On,{v3}")
-        send_line(f"BAT2,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,0,SwVbusCmd,0,VbusOn,1,Vbus_mv,49800,VcpuOn,1,VeletOn,1,ParState,3,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,Vmot4On,{v4},Vmot5On,{v5},Vmot6On,{v6}")
+        send_line(f"BAT1,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,1,SwVbusCmd,1,VbusOn,1,Vbus_mv,49800,ParState,5,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,VmotReason,0,Vmot1On,{v1},Vmot2On,{v2},Vmot3On,{v3}")
+        send_line(f"BAT2,SFC,PWR,2,{seq_pwr},{ts_ms()},BusConn,0,SwVbusCmd,0,VbusOn,1,Vbus_mv,49800,ParState,4,dV_thr_mv,{dv_thr},dV_mv,{dv},Reason,0,VmotReason,0,Vmot4On,{v4},Vmot5On,{v5},Vmot6On,{v6}")
 
         next_pwr = now + (1.0 / PWR_HZ)
 
