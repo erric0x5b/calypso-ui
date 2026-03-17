@@ -1,5 +1,5 @@
 import * as utils from './utils.js';
-import { renderPowerScada, scadaSvg } from './power.js';
+import { renderPowerScada, scadaSvg } from './power.js?v=15';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js';
@@ -30,6 +30,7 @@ let vmotCmdBusy = false;
 let gpVmotHoldActive = false;
 let gpVmotHoldStartMs = 0;
 let gpVmotLastBeepSec = -1;
+let autologCfg = { enabled: true, depth_m: null, hyst_m: null };
 
 const VMOT_ENABLE_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
@@ -536,6 +537,13 @@ function formatEscValue(key, value) {
     return String(value);
 }
 
+function escPowerW(escRow) {
+    const vinMv = Number(escRow?.InVoltage_mv);
+    const iinMa = Number(escRow?.AvgInCur_ma);
+    if (!Number.isFinite(vinMv) || !Number.isFinite(iinMa)) return null;
+    return (vinMv * iinMa) / 1_000_000;
+}
+
 function isMotorAlarm(a) {
     const txt = String(a?.text || "").toUpperCase();
     const src = String(a?.src || "").toUpperCase();
@@ -677,6 +685,7 @@ function renderMissionManifestBlock(data) {
         `<div><b>SID:</b> ${escapeHtml(m.sid || "-")}</div>`,
         `<div><b>Stato:</b> ${data.logging_enabled ? "LOG ON" : "LOG OFF"}${data.is_current ? " (sessione corrente)" : ""}</div>`,
         `<div><b>Creato (SID):</b> ${escapeHtml(m.created_utc || "-")}</div>`,
+        `<div><b>Ora inizio:</b> ${escapeHtml(m.start_utc || m.created_utc || "-")}</div>`,
         `<div><b>Titolo:</b> ${escapeHtml(mm.title || "-")}</div>`,
         `<div><b>Luogo:</b> ${escapeHtml(mm.place || "-")}</div>`,
         `<div><b>Oggetto:</b> ${escapeHtml(mm.objective || "-")}</div>`,
@@ -821,35 +830,38 @@ function setupMissionTab() {
 function render(state) {
     const esc = state.esc || {};
     const ids = Object.keys(esc).map(x => parseInt(x, 10)).filter(Number.isFinite).sort((a, b) => a - b);
-    const preferred = [
-        "RPM", "Duty_x1000", "InVoltage_mv", "AvgInCur_ma", "TempMos_dC", "TempMotor_dC",
-        "Wh_x10", "Tach", "Fault", "src", "ts_ms"
-    ];
-    const keySet = new Set();
-    for (const id of ids) {
+    const rows = ids.map((id) => {
         const d = esc[id] || {};
-        Object.keys(d).forEach(k => keySet.add(k));
-    }
-    const extra = [...keySet].filter(k => !preferred.includes(k)).sort((a, b) => a.localeCompare(b));
-    const keys = preferred.filter(k => keySet.has(k)).concat(extra);
+        const reason = d.Fault ?? d.FaultCode ?? d.Error ?? d.Err;
+        const rpmNum = Number(d.RPM);
+        return {
+            id,
+            vin: formatEscValue("InVoltage_mv", d.InVoltage_mv),
+            iin: formatEscValue("AvgInCur_ma", d.AvgInCur_ma),
+            rpm: Number.isFinite(rpmNum) ? String(Math.round(rpmNum)) : "-",
+            powerW: escPowerW(d),
+            reason: reason == null ? "-" : String(reason)
+        };
+    });
 
-    let ehtml = `<table><tr><th>Campo</th>`;
-    for (const id of ids) ehtml += `<th>ESC ${id}</th>`;
-    ehtml += `</tr>`;
+    const showReason = rows.some((r) => r.reason !== "-");
+    const colspan = showReason ? 6 : 5;
+    let ehtml = `<table class="escCompactTable"><thead><tr><th>ESC</th><th>Vin</th><th>Iin</th><th>RPM</th><th>W</th>`;
+    if (showReason) ehtml += `<th>Reason</th>`;
+    ehtml += `</tr></thead><tbody>`;
 
-    if (!ids.length) {
-        ehtml += `<tr><td colspan="2">No ESC data</td></tr>`;
+    if (!rows.length) {
+        ehtml += `<tr><td colspan="${colspan}">No ESC data</td></tr>`;
     } else {
-        for (const key of keys) {
-            ehtml += `<tr><td>${key}</td>`;
-            for (const id of ids) {
-                const d = esc[id] || {};
-                ehtml += `<td>${formatEscValue(key, d[key])}</td>`;
-            }
+        for (const r of rows) {
+            const pw = r.powerW == null ? "-" : `${r.powerW.toFixed(1)} W`;
+            const reasonClass = r.reason === "-" || r.reason === "0" ? "" : " class=\"bad\"";
+            ehtml += `<tr><td class="escId">ESC ${r.id}</td><td>${r.vin}</td><td>${r.iin}</td><td>${r.rpm}</td><td>${pw}</td>`;
+            if (showReason) ehtml += `<td${reasonClass}>${r.reason}</td>`;
             ehtml += `</tr>`;
         }
     }
-    ehtml += `</table>`;
+    ehtml += `</tbody></table>`;
     ehtml += buildMotorErrorsHtml(state, ids);
     utils.setHTML("esc", ehtml);
 
@@ -1103,6 +1115,60 @@ function applyLightsAckVisibility() {
     const ack = document.getElementById("lgt_ack");
     if (!ack) return;
     ack.classList.toggle("hidden", !uiPrefs.showLightsAck);
+}
+
+function setSetupUiAck(text) {
+    const ack = document.getElementById("setup_ui_ack");
+    if (ack) ack.textContent = text;
+}
+
+function syncAutologSetupControl() {
+    const cb = document.getElementById("setup_log_autostart_enabled");
+    if (cb) cb.checked = !!autologCfg.enabled;
+
+    const label = document.getElementById("setup_log_autostart_label");
+    if (label) {
+        const depth = Number(autologCfg?.depth_m);
+        const depthTxt = Number.isFinite(depth) ? depth.toFixed(2).replace(".", ",") : "?";
+        label.textContent = `Log autostart (depth < ${depthTxt} m)`;
+    }
+}
+
+async function loadAutologSetupConfig(publishAck = false) {
+    try {
+        const r = await fetch("/api/config/autolog", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j?.err || j?.detail || (`HTTP ${r.status}`));
+
+        autologCfg.enabled = !!j?.enabled;
+        const depth = Number(j?.depth_m);
+        autologCfg.depth_m = Number.isFinite(depth) ? depth : null;
+        const hyst = Number(j?.hyst_m);
+        autologCfg.hyst_m = Number.isFinite(hyst) ? hyst : null;
+        syncAutologSetupControl();
+        if (publishAck) setSetupUiAck("Autostart config loaded.");
+    } catch (e) {
+        if (publishAck) setSetupUiAck(e?.message || "Errore lettura autostart.");
+    }
+}
+
+async function saveAutologSetupEnabled(publishAck = true) {
+    const cb = document.getElementById("setup_log_autostart_enabled");
+    if (!cb) return;
+    const desired = !!cb.checked;
+    try {
+        const j = await logs.apiPost("/api/config/autolog", { enabled: desired });
+        autologCfg.enabled = !!j?.enabled;
+        const depth = Number(j?.depth_m);
+        if (Number.isFinite(depth)) autologCfg.depth_m = depth;
+        const hyst = Number(j?.hyst_m);
+        if (Number.isFinite(hyst)) autologCfg.hyst_m = hyst;
+        syncAutologSetupControl();
+        if (publishAck) setSetupUiAck(`Log autostart ${autologCfg.enabled ? "enabled" : "disabled"}.`);
+    } catch (e) {
+        await loadAutologSetupConfig(false);
+        if (publishAck) setSetupUiAck(e?.message || "Errore salvataggio autostart.");
+    }
 }
 
 function applySetupUiPrefs(publishAck = true) {
@@ -1373,6 +1439,13 @@ function setupSetupTab() {
         };
     }
 
+    const autologCb = document.getElementById("setup_log_autostart_enabled");
+    if (autologCb) {
+        autologCb.addEventListener("change", () => {
+            saveAutologSetupEnabled(true).catch(() => { });
+        });
+    }
+
     const setupAutosaveIds = [
         "setup_default_tab",
         "setup_lights_cfg_collapsed",
@@ -1389,6 +1462,7 @@ function setupSetupTab() {
     }
 
     syncSetupTab();
+    loadAutologSetupConfig(false).catch(() => { });
 }
 
 function syncSetupTab() {
@@ -1404,6 +1478,7 @@ function syncSetupTab() {
     if (showLightsAck) showLightsAck.checked = !!uiPrefs.showLightsAck;
     const showAlarmBeep = document.getElementById("setup_alarm_beep_enabled");
     if (showAlarmBeep) showAlarmBeep.checked = !!uiPrefs.showAlarmBeep;
+    syncAutologSetupControl();
 
     for (const w of WIDGETS) {
         const cb = document.getElementById(`setup_widget_${w.id}`);

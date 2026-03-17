@@ -9,6 +9,7 @@ import os
 import re
 import socket
 import threading
+import time
 import zipfile
 from collections import deque
 from datetime import datetime
@@ -57,7 +58,7 @@ UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.10")
 
 LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
 OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
-AUTOLOG_ENABLED = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+AUTOLOG_ENABLED_DEFAULT = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
 AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
 
@@ -128,7 +129,7 @@ def docs_json():
 init_state(LOG_DIR)
 app_logging.init_logging(LOG_DIR, state)
 state.setdefault("autolog", {
-    "enabled": AUTOLOG_ENABLED,
+    "enabled": AUTOLOG_ENABLED_DEFAULT,
     "armed": True,
     "depth_m": AUTOLOG_DEPTH_M,
     "hyst_m": AUTOLOG_HYST_M,
@@ -349,11 +350,12 @@ def handle_udp_datagram(data: bytes, addr):
 async def offline_watchdog():
     while True:
         await asyncio.sleep(1.0)
+        now_ms = int(time.monotonic() * 1000)
         for node, info in state["nodes"].items():
-            last_hb = info.get("last_hb_ms")
-            if last_hb is None:
+            last_seen = info.get("last_seen_monotonic_ms")
+            if last_seen is None:
                 continue
-            dt = (state["last_update_ms"] - last_hb) & 0xFFFFFFFF if state["last_update_ms"] is not None else 0
+            dt = now_ms - int(last_seen)
             if dt > OFFLINE_MS and info.get("online"):
                 info["online"] = False
                 if node in state.get("pods", {}):
@@ -376,7 +378,14 @@ async def autolog_watchdog():
     rearm_m = AUTOLOG_DEPTH_M + AUTOLOG_HYST_M
     while True:
         await asyncio.sleep(1.0)
-        if not AUTOLOG_ENABLED:
+
+        al = state.setdefault("autolog", {})
+        enabled = bool(al.get("enabled", AUTOLOG_ENABLED_DEFAULT))
+        al["enabled"] = enabled
+        al["depth_m"] = AUTOLOG_DEPTH_M
+        al["hyst_m"] = AUTOLOG_HYST_M
+
+        if not enabled:
             continue
 
         nav = state.get("nav") or {}
@@ -384,10 +393,6 @@ async def autolog_watchdog():
         if depth is None:
             continue
 
-        al = state.setdefault("autolog", {})
-        al["enabled"] = AUTOLOG_ENABLED
-        al["depth_m"] = AUTOLOG_DEPTH_M
-        al["hyst_m"] = AUTOLOG_HYST_M
         al["last_depth_m"] = depth
 
         if depth >= rearm_m:
@@ -604,6 +609,39 @@ def api_set_lights_cfg(cfg: dict = Body(...)):
     save_lights_cfg(out)
     return {"ok": True}
 
+@app.get("/api/config/autolog")
+def api_get_autolog_cfg():
+    al = state.setdefault("autolog", {})
+    enabled = bool(al.get("enabled", AUTOLOG_ENABLED_DEFAULT))
+    al["enabled"] = enabled
+    al.setdefault("armed", True)
+    al["depth_m"] = AUTOLOG_DEPTH_M
+    al["hyst_m"] = AUTOLOG_HYST_M
+    return {
+        "enabled": enabled,
+        "depth_m": AUTOLOG_DEPTH_M,
+        "hyst_m": AUTOLOG_HYST_M,
+    }
+
+@app.post("/api/config/autolog")
+def api_set_autolog_cfg(cfg: dict = Body(...)):
+    norm = normalize_bool01(cfg.get("enabled"))
+    if norm is None:
+        return JSONResponse({"ok": False, "err": "enabled missing or invalid"}, status_code=400)
+
+    enabled = bool(norm)
+    al = state.setdefault("autolog", {})
+    al["enabled"] = enabled
+    al["armed"] = True if enabled else bool(al.get("armed", True))
+    al["depth_m"] = AUTOLOG_DEPTH_M
+    al["hyst_m"] = AUTOLOG_HYST_M
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "depth_m": AUTOLOG_DEPTH_M,
+        "hyst_m": AUTOLOG_HYST_M,
+    }
+
 SID_RE = re.compile(r"^\d{8}_\d{6}$")
 SESSION_RE = re.compile(r"^(telemetry|alarms|events)_(\d{8}_\d{6})\.(csv|jsonl)$")
 
@@ -645,6 +683,12 @@ def sid_to_dt(sid: str) -> Optional[datetime]:
         return datetime.strptime(sid, "%Y%m%d_%H%M%S")
     except Exception:
         return None
+
+def sid_start_utc(sid: str) -> Optional[str]:
+    dt = sid_to_dt(sid)
+    if not dt:
+        return None
+    return dt.isoformat() + "Z"
 
 def resolve_sid(requested_sid: str | None, sessions: dict, cur_sid: str | None) -> str | None:
     sid = (requested_sid or "").strip()
@@ -701,7 +745,7 @@ def save_mission_meta(sid: str, mission: dict) -> dict:
     safe = sanitize_mission_meta(mission, sid)
     p = mission_meta_path(sid)
     tmp = p + ".tmp"
-    payload = {"sid": sid, "mission": safe}
+    payload = {"sid": sid, "start_utc": sid_start_utc(sid), "mission": safe}
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     os.replace(tmp, p)
@@ -714,6 +758,7 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
             manifest = {"created_utc": created_utc, "sessions": []}
             for sid in sids:
                 files = sessions[sid]
+                start_utc = sid_start_utc(sid)
                 files_manifest = {}
                 for kind in ("telemetry", "alarms", "events"):
                     p = files.get(kind)
@@ -724,6 +769,7 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
                 one_manifest = {
                     "sid": sid,
                     "created_utc": created_utc,
+                    "start_utc": start_utc,
                     "files": files_manifest,
                     "mission": load_mission_meta(sid),
                 }
@@ -733,6 +779,7 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
         else:
             sid = sids[0]
             files = sessions[sid]
+            start_utc = sid_start_utc(sid)
             files_manifest = {}
             for kind in ("telemetry", "alarms", "events"):
                 p = files.get(kind)
@@ -743,6 +790,7 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
             manifest = {
                 "sid": sid,
                 "created_utc": created_utc,
+                "start_utc": start_utc,
                 "files": files_manifest,
                 "mission": load_mission_meta(sid),
             }
@@ -883,9 +931,11 @@ def api_log_manifest(sid: str | None = None):
 
     files = sessions[chosen_sid]
     sid_dt = sid_to_dt(chosen_sid)
+    start_utc = sid_start_utc(chosen_sid)
     manifest = {
         "sid": chosen_sid,
         "created_utc": (sid_dt.isoformat() + "Z") if sid_dt else None,
+        "start_utc": start_utc,
         "files": {},
         "mission": load_mission_meta(chosen_sid),
     }

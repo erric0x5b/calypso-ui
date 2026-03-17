@@ -2,6 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Toolchain minima per buildare dipendenze native anche su arm/v7.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+  && rm -rf /var/lib/apt/lists/*
+
 # Dipendenze minime (togli curl per ridurre peso e punti di failure)
 RUN python -m ensurepip --upgrade
 

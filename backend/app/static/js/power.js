@@ -1,5 +1,21 @@
 import { fmtV, fmtA, fmtC, parStateLabel, vmotReasonLabel } from "./utils.js";
 
+function normalizeOnline(...vals) {
+  for (const raw of vals) {
+    if (raw == null) continue;
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw !== 0;
+    if (typeof raw === "string") {
+      const tok = raw.trim().toLowerCase();
+      if (!tok) continue;
+      if (["1", "true", "on", "online", "yes"].includes(tok)) return true;
+      if (["0", "false", "off", "offline", "no"].includes(tok)) return false;
+    }
+    return Boolean(raw);
+  }
+  return false;
+}
+
 export function renderPowerScada(state){
   const b1 = state.pods?.BAT1 || {};
   const b2 = state.pods?.BAT2 || {};
@@ -8,8 +24,8 @@ export function renderPowerScada(state){
 
   const bus1 = (b1.bus_conn === 1 || b1.bus_conn === "1" || b1.BusConn === 1 || b1.BusConn === "1");
   const bus2 = (b2.bus_conn === 1 || b2.bus_conn === "1" || b2.BusConn === 1 || b2.BusConn === "1");
-  const online1 = Boolean(b1.online ?? n1.online);
-  const online2 = Boolean(b2.online ?? n2.online);
+  const online1 = normalizeOnline(b1.online, n1.online);
+  const online2 = normalizeOnline(b2.online, n2.online);
   const vbusOn = ((b1.VbusOn === 1 || b1.VbusOn === "1") || (b2.VbusOn === 1 || b2.VbusOn === "1"));
 
   const dv = (b1.dV_mv ?? b2.dV_mv);
@@ -99,8 +115,8 @@ export function scadaSvg(s) {
 
   const c1 = (b1.bus_conn === 1 || b1.bus_conn === "1" || b1.BusConn === 1 || b1.BusConn === "1");
   const c2 = (b2.bus_conn === 1 || b2.bus_conn === "1" || b2.BusConn === 1 || b2.BusConn === "1");
-  const o1 = Boolean(b1.online ?? n1.online);
-  const o2 = Boolean(b2.online ?? n2.online);
+  const o1 = normalizeOnline(b1.online, n1.online);
+  const o2 = normalizeOnline(b2.online, n2.online);
   const parallel = c1 && c2 && busOn;
 
   const vb1 = fmtV(b1.Vbatt_mv), ib1 = fmtA(b1.Ibatt_ma), tb1 = fmtC(b1.Temp_dC);
@@ -313,10 +329,6 @@ export function scadaSvg(s) {
     <text x="${VBUS_CX}" y="175" font-size="14" fill="${tMuted}" text-anchor="middle">
       ${fault ? `FAULT (PWR ${reason}, VMOT ${vmotReason}${dvBad ? `, dV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"} - ${parStateTxt}`}
     </text>
-    <text x="${VBUS_CX}" y="194" font-size="12" fill="${tMuted}" text-anchor="middle">
-      VMOT reason: ${vmotReasonTxt}
-    </text>
-
     <!-- Lines -->
     <line x1="260" y1="140" x2="360" y2="140"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"

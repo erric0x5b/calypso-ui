@@ -1,6 +1,7 @@
 import os
 import json
 import csv
+import time
 from datetime import datetime
 from typing import Tuple, Dict, Any
 
@@ -27,6 +28,8 @@ state: Dict[str, Any] = {
 telemetry_path: str | None = None
 alarms_path: str | None = None
 events_path: str | None = None
+
+TELEMETRY_HEADER = ["ts_ms", "src", "msg", "raw", "heading", "depth", "pitch", "roll"]
 
 
 def _default_logging(ctx_sid: str = None):
@@ -261,10 +264,26 @@ def append_telemetry_csv(p: dict):
     """Append a telemetry line to telemetry_path if logging enabled."""
     if not state.get("logging", {}).get("enabled"):
         return
-    raw_escaped = p["raw"].replace('"', '""')
+    if not telemetry_path:
+        return
+    nav = state.get("nav") or {}
+    att = state.get("att") or {}
     try:
-        with open(telemetry_path, "a", encoding="utf-8") as f:
-            f.write(f'{p["ts_ms"]},{p["src"]},{p["msg"]},"{raw_escaped}"\n')
+        write_header = (not os.path.isfile(telemetry_path)) or (os.path.getsize(telemetry_path) == 0)
+        with open(telemetry_path, "a", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            if write_header:
+                w.writerow(TELEMETRY_HEADER)
+            w.writerow([
+                p.get("ts_ms"),
+                p.get("src"),
+                p.get("msg"),
+                p.get("raw"),
+                nav.get("heading_deg"),
+                nav.get("depth_m"),
+                att.get("pitch_deg"),
+                att.get("roll_deg"),
+            ])
     except Exception:
         pass
 
@@ -316,23 +335,31 @@ def update_state(parsed: dict):
     src = parsed.get("src")
     msg = parsed.get("msg")
     rest = parsed.get("rest", [])
-
+    kv = parser_mod.kv_payload_to_dict(rest)
     state["last_update_ms"] = ts
 
     # ensure node present
     if src not in state["nodes"]:
         state["nodes"][src] = {}
-    state["nodes"][src]["online"] = True
-    state["nodes"][src]["last_hb_ms"] = ts
-
-    kv = parser_mod.kv_payload_to_dict(rest)
+    state["nodes"][src]["last_rx_ms"] = ts
 
     # optional: save kv as hb
     state["nodes"][src].update({"hb": kv})
 
+    if msg == "HB":
+        up_raw = kv.get("Up", 1)
+        try:
+            up = int(up_raw) != 0
+        except Exception:
+            up = str(up_raw).strip().lower() not in ("0", "false", "off", "no")
+        state["nodes"][src]["online"] = up
+        state["nodes"][src]["last_hb_ms"] = ts
+        state["nodes"][src]["last_seen_monotonic_ms"] = int(time.monotonic() * 1000)
+        if src in state["pods"]:
+            state["pods"][src]["online"] = up
+
     # Keep convenient per-pod connectivity flags in sync for UI.
     if src in state["pods"]:
-        state["pods"][src]["online"] = True
         if "BusConn" in kv:
             try:
                 state["pods"][src]["bus_conn"] = int(kv["BusConn"])

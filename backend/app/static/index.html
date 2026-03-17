@@ -5,18 +5,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=9">
+  <link rel="stylesheet" href="app.css?v=15">
 </head>
 
 <body>
-  <h2>
-    <img id="brand_logo" class="brandLogo" src="media/Logo_deepex_2026-tondo.svg" alt="DeepEx logo" />
-    <span class="brandName">Calypso-UI</span>
-    <span id="status" class="pill">connecting...</span>
-  </h2>
-
-  <div class="topbar">
-    <span class="pill" id="main_mode">VEHICLE</span>
+  <header class="appHeader">
+    <div class="brandRow">
+      <img id="brand_logo" class="brandLogo" src="media/Logo_deepex_2026-tondo.svg" alt="DeepEx logo" />
+      <span class="brandName">Calypso-UI</span>
+      <div class="headerBadges">
+        <span id="status" class="pill">connecting...</span>
+        <span class="pill" id="main_mode">VEHICLE</span>
+      </div>
+    </div>
     <div class="tabs">
       <button class="tab active" data-tab="vehicle">VEHICLE</button>
       <button class="tab" data-tab="mission">MISSION</button>
@@ -25,12 +26,11 @@
       <button class="tab" data-tab="setup">SETUP</button>
       <button id="btn_help" class="tabHelp">HELP</button>
     </div>
-
     <div class="widgetsMenu">
       <button id="btn_widgets">WIDGETS</button>
       <div id="widgets_panel" class="dropdown hidden"></div>
     </div>
-  </div>
+  </header>
   <div class="layout">
     <div class="main">
       <div id="missionWrap" class="missionWrap">
@@ -70,22 +70,26 @@
           </div>
           <div class="cardBody">
             <div id="main_power_badges"></div>
-            <div id="main_scada" style="margin-top:10px;"></div>
-            <div class="vmotCtrl" id="vmot_ctrl">
-              <div class="vmotRow">
-                <span class="pill mono" id="vmot_state">VMOT: -</span>
-                <span class="pill mono" id="vmot_cmd_ack">-</span>
+            <div class="powerScadaLayout">
+              <div class="powerScadaPanel">
+                <div class="vmotCtrl" id="vmot_ctrl">
+                  <div class="vmotRow">
+                    <span class="pill mono" id="vmot_state">VMOT: -</span>
+                    <span class="pill mono" id="vmot_cmd_ack">-</span>
+                  </div>
+                  <div class="pill mono vmotCockpitWarn hidden" id="vmot_cockpit_warn"></div>
+                  <div class="vmotActions">
+                    <button id="vmot_enable_hold" class="vmotEnableBtn" aria-label="Enable VMOT hold 3 seconds">
+                      <span class="vmotEnableFill" id="vmot_enable_fill"></span>
+                      <span class="vmotEnableText" id="vmot_enable_text">ENABLE VMOT (hold 3s)</span>
+                    </button>
+                    <button id="vmot_disable_now" class="vmotDisableBtn">DISABLE VMOT</button>
+                  </div>
+                </div>
               </div>
-              <div class="pill mono vmotCockpitWarn hidden" id="vmot_cockpit_warn"></div>
-              <div class="vmotActions">
-                <button id="vmot_enable_hold" class="vmotEnableBtn" aria-label="Enable VMOT hold 3 seconds">
-                  <span class="vmotEnableFill" id="vmot_enable_fill"></span>
-                  <span class="vmotEnableText" id="vmot_enable_text">ENABLE VMOT (hold 3s)</span>
-                </button>
-                <button id="vmot_disable_now" class="vmotDisableBtn">DISABLE VMOT</button>
-              </div>
+              <div id="main_scada"></div>
             </div>
-          </div>
+              </div>
         </div>
       </div>
       <div id="missionTabWrap" class="hidden">
@@ -187,6 +191,10 @@
                   <option value="setup">SETUP</option>
                 </select>
                 <label class="setupCheck"><input type="checkbox" id="setup_lights_cfg_collapsed"> Lights config collapsed</label>
+                <label class="setupCheck">
+                  <input type="checkbox" id="setup_log_autostart_enabled">
+                  <span id="setup_log_autostart_label">Log autostart (depth threshold)</span>
+                </label>
                 <div class="setupSectionTitle">Dock widgets</div>
                 <div id="setup_widgets" class="setupChecks"></div>
                 <div class="setupActions">
@@ -376,8 +384,8 @@
     }
   }
   </script>
-  <script type="module" src="three_boot.js?v=9"></script>
-  <script type="module" src="js/main.js?v=9"></script>
+  <script type="module" src="three_boot.js?v=15"></script>
+  <script type="module" src="js/main.js?v=15"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 
