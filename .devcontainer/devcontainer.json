@@ -1,6 +1,6 @@
 {
   "name": "calypso-ui",
-  "dockerComposeFile": "../docker-compose.yml",
+  "dockerComposeFile": ["../compose.yaml", "../compose.local.yaml"],
   "service": "backend",
   "workspaceFolder": "/app",
   "shutdownAction": "none",

@@ -1,0 +1,28 @@
+services:
+  backend:
+    environment:
+      CALYPSO_UDP_TX_HOST: "${CALYPSO_UDP_TX_HOST:-udp-sim}"
+      MAVLINK_ENABLED: "${MAVLINK_ENABLED:-0}"
+      MAVLINK_HOST: "${MAVLINK_HOST:-127.0.0.1}"
+      MAVLINK_PORT: "${MAVLINK_PORT:-14550}"
+      MAVLINK_WS_URL: "${MAVLINK_WS_URL:-}"
+
+  udp-sim:
+    image: python:3.11-slim
+    container_name: calypso-ui-udp-sim
+    depends_on:
+      - backend
+    environment:
+      SIM_TARGET_HOST: "${SIM_TARGET_HOST:-backend}"
+      SIM_TARGET_PORT: "${SIM_TARGET_PORT:-14590}"
+      SIM_CMD_LISTEN_PORT: "${SIM_CMD_LISTEN_PORT:-14591}"
+      SIM_RATE_ENV_HZ: "${SIM_RATE_ENV_HZ:-10}"
+      SIM_RATE_ESC_HZ: "${SIM_RATE_ESC_HZ:-10}"
+      SIM_RATE_HB_HZ: "${SIM_RATE_HB_HZ:-1}"
+    volumes:
+      - ./simulator:/simulator:ro
+    working_dir: /simulator
+    command: ["python", "udp_sim.py"]
+    restart: unless-stopped
+    networks:
+      - calypso-net

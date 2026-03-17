@@ -5,46 +5,27 @@ services:
       dockerfile: docker/Dockerfile
     container_name: calypso-ui-backend
     environment:
-      CALYPSO_HTTP_PORT: "8080"
-      CALYPSO_UDP_RX_PORT: "14590"
-      CALYPSO_UDP_TX_PORT: "14591"
+      CALYPSO_HTTP_PORT: "${CALYPSO_HTTP_PORT:-80}"
+      CALYPSO_UDP_RX_PORT: "${CALYPSO_UDP_RX_PORT:-14590}"
+      CALYPSO_UDP_TX_PORT: "${CALYPSO_UDP_TX_PORT:-14591}"
       CALYPSO_LOG_DIR: "/data/deepex_logs"
-      CALYPSO_UDP_TX_HOST: "192.168.2.3"
-      MAVLINK_HOST: "127.0.0.1"
-      MAVLINK_PORT: "14550"
+      CALYPSO_UDP_TX_HOST: "${CALYPSO_UDP_TX_HOST:-192.168.2.3}"
+      MAVLINK_ENABLED: "${MAVLINK_ENABLED:-1}"
+      MAVLINK_HOST: "${MAVLINK_HOST:-127.0.0.1}"
+      MAVLINK_PORT: "${MAVLINK_PORT:-14550}"
+      MAVLINK_WS_URL: "${MAVLINK_WS_URL:-ws://192.168.2.2:6040/v1/ws/mavlink}"
     ports:
-      - "8090:8080"
-      - "14590:14590/udp"
-      - "14591:14591/udp"
+      - "${HOST_HTTP_PORT:-8090}:80"
+      - "${HOST_UDP_RX_PORT:-14590}:14590/udp"
+      - "${HOST_UDP_TX_PORT:-14591}:14591/udp"
     volumes:
       - .:/app
-      - /share/Container/calypso-ui/logs:/data/deepex_logs
+      - "${CALYPSO_LOGS_PATH:-./data/logs}:/data/deepex_logs"
     restart: unless-stopped
     networks:
       calypso-net:
         aliases:
           - backend
-    extra_hosts:
-      - "blueos:192.168.2.2"
-  udp-sim:
-    image: python:3.11-slim
-    container_name: calypso-ui-udp-sim
-    depends_on:
-      - backend
-    environment:
-      SIM_TARGET_HOST: "backend"
-      SIM_TARGET_PORT: "14590"
-      SIM_CMD_LISTEN_PORT: "14591"
-      SIM_RATE_ENV_HZ: "10"
-      SIM_RATE_ESC_HZ: "10"
-      SIM_RATE_HB_HZ: "1"
-    volumes:
-      - ./simulator:/simulator
-    working_dir: /simulator
-    command: ["python", "udp_sim.py"]
-    restart: unless-stopped
-    networks:
-      - calypso-net
 
 networks:
   calypso-net:

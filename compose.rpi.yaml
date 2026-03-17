@@ -1,0 +1,12 @@
+services:
+  backend:
+    environment:
+      CALYPSO_UDP_TX_HOST: "${CALYPSO_UDP_TX_HOST:-192.168.2.3}"
+      MAVLINK_ENABLED: "${MAVLINK_ENABLED:-1}"
+      MAVLINK_HOST: "${MAVLINK_HOST:-127.0.0.1}"
+      MAVLINK_PORT: "${MAVLINK_PORT:-14550}"
+      MAVLINK_WS_URL: "${MAVLINK_WS_URL:-ws://192.168.2.2:6040/v1/ws/mavlink}"
+    volumes:
+      - /share/Container/calypso-ui/logs:/data/deepex_logs
+    extra_hosts:
+      - "blueos:${BLUEOS_IP:-192.168.2.2}"
