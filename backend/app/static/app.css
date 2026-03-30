@@ -752,6 +752,108 @@ label {
   background: rgba(239, 68, 68, .20);
 }
 
+.alarmList {
+  display: grid;
+  gap: 8px;
+}
+
+.alarmTools {
+  margin-bottom: 10px;
+}
+
+.alarmFilterGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.alarmFilterBtn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .04);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.alarmFilterBtn.is-active {
+  border-color: rgba(45, 107, 255, .45);
+  background: rgba(45, 107, 255, .14);
+  color: var(--text);
+}
+
+.alarmSectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.alarmItem {
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: rgba(255, 255, 255, .04);
+}
+
+.alarmItem.ok {
+  border-color: rgba(34, 197, 94, .30);
+  background: rgba(34, 197, 94, .08);
+}
+
+.alarmItem.warn {
+  border-color: rgba(245, 158, 11, .34);
+  background: rgba(245, 158, 11, .10);
+}
+
+.alarmItem.bad {
+  border-color: rgba(239, 68, 68, .34);
+  background: rgba(239, 68, 68, .10);
+}
+
+.alarmItemHist {
+  opacity: .92;
+}
+
+.alarmItemHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alarmItemSev {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .3px;
+  border: 1px solid currentColor;
+}
+
+.alarmItemType {
+  font-weight: 900;
+  color: var(--text);
+}
+
+.alarmItemDetail {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.alarmItemMeta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* Area 3D */
 .rov3d{
   width: 100%;

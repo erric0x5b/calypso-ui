@@ -9,6 +9,7 @@ SIM_TARGET_PORT = int(os.getenv("SIM_TARGET_PORT", "14590"))
 ENV_HZ = float(os.getenv("SIM_RATE_ENV_HZ", "10"))
 ESC_HZ = float(os.getenv("SIM_RATE_ESC_HZ", "10"))
 HB_HZ  = float(os.getenv("SIM_RATE_HB_HZ", "1"))
+ALM_HZ = float(os.getenv("SIM_RATE_ALM_HZ", "2"))
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -36,12 +37,15 @@ def cks(payload: str) -> str:
 seq_env = 0
 seq_esc = 0
 seq_hb = 0
+seq_alm = 0
 t0 = time.time()
 PWR_HZ = 5.0
 next_pwr = time.time()
+next_alm = time.time()
 seq_pwr = 0
 vmot_lock = threading.Lock()
 vmot_on = [1, 1, 0, 1, 0, 0]  # VMOT1..VMOT6
+alarm_active = {}
 
 def ts_ms():
     return int((time.time() - t0) * 1000) & 0xFFFFFFFF
@@ -49,6 +53,64 @@ def ts_ms():
 next_env = time.time()
 next_esc = time.time()
 next_hb  = time.time()
+
+ALARM_SCENES = [
+    {"src": "BAT1", "id": 300, "sev": 2, "latched": 0, "text": "ALM_VBUS_LOW: VBUS 47.8V"},
+    {"src": "BAT2", "id": 210, "sev": 3, "latched": 1, "text": "ALM_OVERTEMP: PCB 71.4C"},
+    {"src": "BAT2", "id": 200, "sev": 4, "latched": 1, "text": "ALM_LEAK: water ingress sensor active"},
+    {"src": "BAT1", "id": 120, "sev": 3, "latched": 0, "text": "ALM_CAN_BUS: timeout on ESC chain"},
+]
+
+def send_alarm(src: str, alarm_id: int, sev: int, active: int, latched: int, text: str):
+    global seq_alm
+    seq_alm = (seq_alm + 1) & 0xFFFFFFFF
+    payload = (
+        f"{src},SFC,ALM,2,{seq_alm},{ts_ms()},"
+        f"Id,{alarm_id},Sev,{sev},Active,{active},Latched,{latched},Text,{text}"
+    )
+    send_line(payload)
+
+def desired_alarm_state(elapsed_s: float):
+    cycle = int(elapsed_s) % 60
+    if cycle < 12:
+        return None
+    if cycle < 24:
+        return ALARM_SCENES[0]
+    if cycle < 36:
+        return ALARM_SCENES[1]
+    if cycle < 48:
+        return ALARM_SCENES[2]
+    return ALARM_SCENES[3]
+
+def update_alarm_stream():
+    desired = desired_alarm_state(time.time() - t0)
+    desired_key = None
+    if desired:
+        desired_key = (desired["src"], desired["id"])
+
+    for key, cfg in list(alarm_active.items()):
+        if key == desired_key:
+            continue
+        send_alarm(
+            cfg["src"],
+            cfg["id"],
+            cfg["sev"],
+            0,
+            cfg["latched"],
+            cfg["text"],
+        )
+        del alarm_active[key]
+
+    if desired_key and desired_key not in alarm_active:
+        alarm_active[desired_key] = desired
+        send_alarm(
+            desired["src"],
+            desired["id"],
+            desired["sev"],
+            1,
+            desired["latched"],
+            desired["text"],
+        )
 
 def parse_line(line: str):
     line = line.strip()
@@ -129,6 +191,10 @@ while True:
             payload = f"BAT1,SFC,ESC,2,{seq_esc},{ts_ms()},VescId,{esc_id},InVoltage_mv,50000,AvgInCur_ma,1200,Wh_x10,153,RPM,1800"
             send_line(payload)
         next_esc = now + (1.0 / ESC_HZ)
+
+    if now >= next_alm:
+        update_alarm_stream()
+        next_alm = now + (1.0 / ALM_HZ)
 
     time.sleep(0.001)
 

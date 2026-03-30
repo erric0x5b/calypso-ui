@@ -18,6 +18,7 @@ let gpBusyLight = false;
 let gpBusyEvent = false;
 let gpBusyLog = false;
 let setupWired = false;
+let alarmPanelWired = false;
 let alarmPrevActiveKeys = null;
 let alarmBeepCtx = null;
 let alarmBeepCooldownUntil = 0;
@@ -35,6 +36,7 @@ let autologCfg = { enabled: true, depth_m: null, hyst_m: null };
 const VMOT_ENABLE_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
 const VMOT_ACK_POLL_MS = 120;
+const ALARM_FILTERS = new Set(["all", "crit", "error", "warn"]);
 
 const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "setup"];
 const GP_ACTIONS = [
@@ -502,6 +504,113 @@ function resolveAlarmGuide(alarm) {
     return null;
 }
 
+function splitAlarmText(alarm) {
+    const raw = String(alarm?.text || "").trim();
+    if (!raw) return { type: "Alarm", detail: "" };
+
+    const colon = raw.indexOf(":");
+    if (colon > 0) {
+        return {
+            type: raw.slice(0, colon).trim(),
+            detail: raw.slice(colon + 1).trim(),
+        };
+    }
+
+    return { type: raw, detail: "" };
+}
+
+function normalizeAlarmFilter(filter) {
+    return ALARM_FILTERS.has(filter) ? filter : "all";
+}
+
+function alarmMatchesFilter(alarm, filter) {
+    const sev = Number(alarm?.sev);
+    if (filter === "crit") return sev === 4;
+    if (filter === "error") return sev === 3;
+    if (filter === "warn") return sev === 2;
+    return true;
+}
+
+function filterAlarms(list) {
+    const arr = Array.isArray(list) ? list : [];
+    const filter = normalizeAlarmFilter(uiPrefs.alarmFilter);
+    return arr.filter((alarm) => alarmMatchesFilter(alarm, filter));
+}
+
+function renderAlarmItem(alarm, opts = {}) {
+    const sev = utils.sevLabel(alarm?.sev);
+    const sevClass = utils.sevClass(alarm?.sev);
+    const latch = Number(alarm?.latched) === 1 ? "LAT" : "TRN";
+    const idTxt = (alarm?.id == null ? "-" : String(alarm.id));
+    const srcTxt = String(alarm?.src || "-");
+    const parsed = splitAlarmText(alarm);
+    const guide = resolveAlarmGuide(alarm);
+    const typeTxt = guide?.label || parsed.type || "Alarm";
+    const detailTxt = parsed.detail || "";
+    const metaTxt = `ID ${idTxt} | ${latch} | SRC ${srcTxt}`;
+    const extraClass = opts.history ? " alarmItemHist" : "";
+
+    return `<div class="alarmItem ${sevClass}${extraClass}">
+        <div class="alarmItemHead">
+            <span class="alarmItemSev">${sev}</span>
+            <span class="alarmItemType">${escapeHtml(typeTxt)}</span>
+        </div>
+        ${detailTxt ? `<div class="alarmItemDetail mono">${escapeHtml(detailTxt)}</div>` : ""}
+        <div class="alarmItemMeta mono">${escapeHtml(metaTxt)}</div>
+    </div>`;
+}
+
+function applyAlarmPanelPrefs() {
+    const filter = normalizeAlarmFilter(uiPrefs.alarmFilter);
+    document.querySelectorAll("[data-alarm-filter]").forEach((btn) => {
+        const active = btn.getAttribute("data-alarm-filter") === filter;
+        btn.classList.toggle("is-active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    const hist = document.getElementById("alarms_hist");
+    if (hist) {
+        const collapsed = !!uiPrefs.alarmHistoryCollapsed;
+        hist.classList.toggle("hidden", collapsed);
+        hist.style.display = collapsed ? "none" : "";
+    }
+    const histToggle = document.getElementById("alarms_hist_toggle");
+    setChevronState(histToggle, !!uiPrefs.alarmHistoryCollapsed);
+    if (histToggle) {
+        histToggle.setAttribute("aria-label", uiPrefs.alarmHistoryCollapsed ? "Mostra ultimi 10" : "Nascondi ultimi 10");
+    }
+}
+
+function setupAlarmPanelControls() {
+    if (alarmPanelWired) return;
+    alarmPanelWired = true;
+
+    const tools = document.getElementById("alarm_tools");
+    if (tools) {
+        tools.addEventListener("click", (ev) => {
+            const btn = ev.target.closest("[data-alarm-filter]");
+            if (!btn) return;
+            const filter = normalizeAlarmFilter(btn.getAttribute("data-alarm-filter"));
+            if (uiPrefs.alarmFilter === filter) return;
+            uiPrefs.alarmFilter = filter;
+            saveUiPrefs(uiPrefs);
+            applyAlarmPanelPrefs();
+            if (snapshot) render(snapshot);
+        });
+    }
+
+    const histToggle = document.getElementById("alarms_hist_toggle");
+    if (histToggle) {
+        histToggle.addEventListener("click", () => {
+            uiPrefs.alarmHistoryCollapsed = !uiPrefs.alarmHistoryCollapsed;
+            saveUiPrefs(uiPrefs);
+            applyAlarmPanelPrefs();
+        });
+    }
+
+    applyAlarmPanelPrefs();
+}
+
 function renderHelpAlarmLinks(state) {
     const box = document.getElementById("help_alarm_links");
     if (!box) return;
@@ -865,17 +974,15 @@ function render(state) {
     ehtml += buildMotorErrorsHtml(state, ids);
     utils.setHTML("esc", ehtml);
 
-    const aa = state.alarms_active || [];
-    utils.setHTML("alarms_active", aa.length ? aa.map(a => {
-        const lt = Number(a?.latched) === 1 ? "LAT" : "TRN";
-        return `<div class="${utils.sevClass(a.sev)}">[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
-    }).join("") : `<div class="ok">none</div>`);
-
-    const hist = (state.alarms_history || []).slice(-10).reverse();
-    utils.setHTML("alarms_hist", hist.length ? hist.map(a => {
-        const lt = Number(a?.latched) === 1 ? "LAT" : "TRN";
-        return `<div>[${utils.sevLabel(a.sev)}|${lt}] ${a.text ?? ""} <span class="mono">${a.ts_ms}</span></div>`;
-    }).join("") : `<div class="ok">none</div>`);
+    const aa = filterAlarms(state.alarms_active || []);
+    const hist = filterAlarms(state.alarms_history || []).slice(-10).reverse();
+    utils.setHTML("alarms_active", aa.length
+        ? `<div class="alarmList">${aa.map((a) => renderAlarmItem(a)).join("")}</div>`
+        : `<div class="ok">none</div>`);
+    utils.setHTML("alarms_hist", hist.length
+        ? `<div class="alarmList">${hist.map((a) => renderAlarmItem(a, { history: true })).join("")}</div>`
+        : `<div class="ok">none</div>`);
+    applyAlarmPanelPrefs();
     renderHelpAlarmLinks(state);
     handleAlarmBeep(state);
 
@@ -936,6 +1043,7 @@ async function init() {
     ensureAlarmAudioUnlock();
     setupVmotControls();
     setupHelpPanel();
+    setupAlarmPanelControls();
     renderWidgetsMenu();
     setupWidgetsMenu();
     applyWidgetVisibility();
@@ -1082,6 +1190,8 @@ uiPrefs.collapsed ??= {};
 uiPrefs.mainTab ??= "vehicle";
 uiPrefs.showLightsAck ??= true;
 uiPrefs.showAlarmBeep ??= true;
+uiPrefs.alarmFilter ??= "all";
+uiPrefs.alarmHistoryCollapsed ??= true;
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.power ??= false;
 uiPrefs.collapsed.lights ??= false;

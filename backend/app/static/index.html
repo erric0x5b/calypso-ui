@@ -249,9 +249,22 @@
           </div>
         </div>
         <div class="cardBody">
-          <div><b>Active</b></div>
+          <div class="alarmTools" id="alarm_tools">
+            <div class="alarmFilterGroup" role="group" aria-label="Filtro severita allarmi">
+              <button type="button" class="alarmFilterBtn" data-alarm-filter="all">Tutti</button>
+              <button type="button" class="alarmFilterBtn" data-alarm-filter="crit">Critical</button>
+              <button type="button" class="alarmFilterBtn" data-alarm-filter="error">Error</button>
+              <button type="button" class="alarmFilterBtn" data-alarm-filter="warn">Warning</button>
+            </div>
+          </div>
+          <div class="alarmSectionHead">
+            <b>Active</b>
+          </div>
           <div id="alarms_active"></div>
-          <div style="margin-top:10px"><b>Last 10</b></div>
+          <div class="alarmSectionHead" style="margin-top:10px">
+            <b>Ultimi 10</b>
+            <button type="button" id="alarms_hist_toggle" class="iconBtn chevBtn" aria-label="Nascondi ultimi 10"></button>
+          </div>
           <div id="alarms_hist"></div>
         </div>
       </div>
