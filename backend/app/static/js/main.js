@@ -247,7 +247,7 @@ function playAlarmBeep(force = false) {
 }
 
 function handleAlarmBeep(state) {
-    const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
+    const active = visibleActiveAlarms(state);
     const cur = new Set(active.map(alarmKey));
 
     if (alarmPrevActiveKeys == null) {
@@ -278,6 +278,32 @@ function vmotBits(state) {
         (b2.Vmot5On === 1 || b2.Vmot5On === "1"),
         (b2.Vmot6On === 1 || b2.Vmot6On === "1"),
     ];
+}
+
+function anyVmotOn(state) {
+    return vmotBits(state).some(Boolean);
+}
+
+function isCanDeviceAlarm(alarm) {
+    const idNum = Number(alarm?.id);
+    if (idNum === 120) return true;
+    if (Number.isFinite(idNum) && idNum >= 401 && idNum <= 499) return true;
+
+    const txt = String(alarm?.text || "").toUpperCase();
+    const src = String(alarm?.src || "").toUpperCase();
+    return (
+        src.startsWith("ESC") ||
+        txt.includes("ALM_CAN_BUS") ||
+        txt.includes("CAN") ||
+        txt.includes("VESC_LOST") ||
+        txt.includes("ESC CHAIN")
+    );
+}
+
+function visibleActiveAlarms(state) {
+    const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
+    if (anyVmotOn(state)) return active;
+    return active.filter((alarm) => !isCanDeviceAlarm(alarm));
 }
 
 function renderVmotState(state) {
@@ -313,8 +339,7 @@ function renderVmotCockpitWarning(state) {
 
     const armedRaw = state?.mav?.safety_armed;
     const cockpitArmed = (armedRaw === 1 || armedRaw === "1" || armedRaw === true);
-    const anyVmotOn = vmotBits(state).some(Boolean);
-    const show = cockpitArmed && !anyVmotOn;
+    const show = cockpitArmed && !anyVmotOn(state);
 
     box.classList.toggle("hidden", !show);
     box.textContent = show
@@ -616,7 +641,7 @@ function renderHelpAlarmLinks(state) {
     const box = document.getElementById("help_alarm_links");
     if (!box) return;
 
-    const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
+    const active = visibleActiveAlarms(state);
     if (!active.length) {
         box.innerHTML = "Nessun allarme attivo.";
         return;
@@ -668,6 +693,10 @@ function isMotorAlarm(a) {
 }
 
 function buildMotorErrorsHtml(state, escIds) {
+    if (!anyVmotOn(state)) {
+        return `<div style="margin-top:8px;" class="ok"><b>Errori Motori:</b> n/a (VMOT OFF)</div>`;
+    }
+
     const esc = state.esc || {};
     const errs = [];
 
@@ -679,7 +708,7 @@ function buildMotorErrorsHtml(state, escIds) {
         }
     }
 
-    const activeMotorAlarms = (state.alarms_active || []).filter(isMotorAlarm);
+    const activeMotorAlarms = visibleActiveAlarms(state).filter(isMotorAlarm);
     for (const a of activeMotorAlarms) {
         errs.push(`ALM [${utils.sevLabel(a.sev)}] ${a.text ?? ""}`);
     }
@@ -938,11 +967,12 @@ function setupMissionTab() {
 }
 
 function render(state) {
+    const motorsPowered = anyVmotOn(state);
     const esc = state.esc || {};
     const ids = Object.keys(esc).map(x => parseInt(x, 10)).filter(Number.isFinite).sort((a, b) => a - b);
     const rows = ids.map((id) => {
         const d = esc[id] || {};
-        const reason = d.Fault ?? d.FaultCode ?? d.Error ?? d.Err;
+        const reason = motorsPowered ? (d.Fault ?? d.FaultCode ?? d.Error ?? d.Err) : null;
         const rpmNum = Number(d.RPM);
         return {
             id,
@@ -975,7 +1005,7 @@ function render(state) {
     ehtml += buildMotorErrorsHtml(state, ids);
     utils.setHTML("esc", ehtml);
 
-    const aa = filterAlarms(state.alarms_active || []);
+    const aa = filterAlarms(visibleActiveAlarms(state));
     const hist = filterAlarms(state.alarms_history || []).slice(-10).reverse();
     utils.setHTML("alarms_active", aa.length
         ? `<div class="alarmList">${aa.map((a) => renderAlarmItem(a)).join("")}</div>`
