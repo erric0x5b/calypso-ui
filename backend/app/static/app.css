@@ -606,8 +606,8 @@ label {
 
 .missionTop {
   display: grid;
-  grid-template-columns: clamp(200px, 18vw, 280px) 1fr clamp(200px, 18vw, 280px);
-  gap: 12px;
+  grid-template-columns: clamp(160px, 15vw, 220px) 1fr clamp(160px, 15vw, 220px);
+  gap: 10px;
   align-items: start;
   min-height: 0;
 }
@@ -618,14 +618,23 @@ label {
   flex-direction: column;
 }
 
+.missionSide .cardBody {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.missionCenter .cardBody {
+  padding-bottom: 6px;
+}
+
 .missionBottom {
   /* resta sotto, full width */
 }
 
 .powerScadaLayout {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
   margin-top: 10px;
 }
@@ -645,7 +654,7 @@ label {
 
 #main_scada svg {
   width: 100%;
-  max-width: 980px;
+  max-width: 920px;
   height: auto;
   display: block;
 }
@@ -856,11 +865,12 @@ label {
 
 /* Area 3D */
 .rov3d{
-  width: 100%;
-  height: clamp(170px, 30vh, 300px);
+  width: min(100%, 560px);
+  height: clamp(145px, 22vh, 215px);
   aspect-ratio: 2 / 1;
-  min-height: 170px;
-  max-height: 300px;
+  min-height: 145px;
+  max-height: 215px;
+  margin: 0 auto;
   border-radius: 12px;
   overflow: hidden;
   position: relative;
@@ -883,6 +893,12 @@ label {
 
   .main .card {
     min-height: 60vh;
+  }
+
+  #motors_left > .thRing:nth-child(2),
+  #motors_right > .thRing:nth-child(2) {
+    justify-self: center;
+    --th-ring-shift: 0px;
   }
 
   .powerScadaLayout {
@@ -1001,7 +1017,7 @@ label {
 .motorsRings{
   display:grid;
   grid-template-rows: repeat(3, auto);
-  gap: 14px;
+  gap: 10px;
   align-items:start;
   justify-items:center;
   min-height: 0;      /* <- importante */
@@ -1009,12 +1025,34 @@ label {
 }
 
 .thRing {
-  width: 104px;
-  height: 104px;
+  --th-ring-shift: 0px;
+  width: 98px;
+  height: 98px;
   display: block;
+  transform: translateX(var(--th-ring-shift)) scale(1.12);
+  transform-origin: center;
   /* avoid inline baseline shift */
   overflow: visible;
   /* evita clipping strano */
+}
+
+#motors_left > .thRing:nth-child(2) {
+  justify-self: start;
+  --th-ring-shift: -12px;
+}
+
+#motors_right > .thRing:nth-child(2) {
+  justify-self: end;
+  --th-ring-shift: 12px;
+}
+
+#att_readout {
+  margin-top: 6px !important;
+  width: min(100%, 560px);
+  margin-left: auto;
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 svg.thRing {
@@ -1170,8 +1208,22 @@ svg.thRing {
 }
 
 /* ===== Setup tab ===== */
-.setupBody {
+#setupWrap {
+  height: 100%;
   min-height: 0;
+}
+
+#setupWrap > .card {
+  height: 100%;
+  min-height: 0;
+}
+
+.setupBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .setupGrid {

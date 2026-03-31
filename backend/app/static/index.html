@@ -69,7 +69,6 @@
             <div class="cardTitle">Power SCADA</div>
           </div>
           <div class="cardBody">
-            <div id="main_power_badges"></div>
             <div class="powerScadaLayout">
               <div class="powerScadaPanel">
                 <div class="vmotCtrl" id="vmot_ctrl">
@@ -206,6 +205,10 @@
 
               <section class="setupCard">
                 <h3 class="setupTitle">Joystick Mapping</h3>
+                <label class="setupLabel" for="setup_gp_device">Joystick device</label>
+                <select id="setup_gp_device">
+                  <option value="-1">Auto (first connected)</option>
+                </select>
                 <div id="setup_gp_table" class="setupGpTable"></div>
                 <div class="setupActions">
                   <button id="setup_gp_save">Save Mapping</button>
@@ -267,19 +270,6 @@
           </div>
           <div id="alarms_hist"></div>
         </div>
-      </div>
-
-      <div class="card widget" data-widget="power">
-        <div class="cardHead">
-          <div class="cardTitle">Status</div>
-          <div class="cardActions">
-            <button class="iconBtn chevBtn" data-collapse="power" aria-label="Collapse status"></button>
-          </div>
-        </div>
-        <div class="cardBody">
-          <div id="power_scada_badges"></div>
-        </div>
-
       </div>
 
       <div class="card widget" data-widget="lights">

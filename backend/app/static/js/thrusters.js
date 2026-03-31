@@ -87,13 +87,17 @@ export function renderMotorsRings(state){
 export function thrusterRingSvg(label, cmdPct, rpm){
   const r = 44, cx = 60, cy = 60;
   const C = 2 * Math.PI * r;
+  const halfC = C / 2;
 
-  let pct = (cmdPct == null) ? 0 : Math.max(0, Math.min(100, Math.abs(cmdPct)));
-  const dash = (pct/100) * C;
-  const col = (cmdPct == null) ? "#6b7280" : (cmdPct > 2 ? "#22c55e" : (cmdPct < -2 ? "#32c7f5" : "#6b7280"));
-  const cmdTxt = (cmdPct == null) ? "—" : `${Math.round(cmdPct)}%`;
-  const rpmTxt = (rpm == null) ? "rpm —" : `rpm ${rpm}`;
-  const dirTxt = (cmdPct == null) ? "" : (cmdPct > 2 ? "FWD" : (cmdPct < -2 ? "REV" : "HOLD"));
+  const pct = (cmdPct == null) ? 0 : Math.max(0, Math.min(100, Math.abs(cmdPct)));
+  const dir =
+    (cmdPct == null) ? "hold" :
+    (cmdPct > 2 ? "fwd" : (cmdPct < -2 ? "rev" : "hold"));
+  const dash = (pct / 100) * halfC;
+  const col = dir === "fwd" ? "#22c55e" : (dir === "rev" ? "#32c7f5" : "#6b7280");
+  const cmdTxt = (cmdPct == null) ? "-" : `${Math.round(cmdPct)}%`;
+  const rpmTxt = (rpm == null) ? "rpm -" : `rpm ${rpm}`;
+  const activeRot = dir === "rev" ? 90 : -90;
 
   // ID unico (solo caratteri sicuri)
   const uid = String(label).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -110,16 +114,18 @@ export function thrusterRingSvg(label, cmdPct, rpm){
         </feMerge>
       </filter>
     </defs>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="10"/>
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round"
-      stroke-dasharray="${dash} ${C - dash}" transform="rotate(-90 ${cx} ${cy})" filter="url(#${glowId})"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="10"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.09)" stroke-width="10"
+      stroke-linecap="round" stroke-dasharray="${halfC} ${C - halfC}" transform="rotate(-90 ${cx} ${cy})"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="10"
+      stroke-linecap="round" stroke-dasharray="${halfC} ${C - halfC}" transform="rotate(90 ${cx} ${cy})"/>
+    ${dir === "hold" ? "" : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round"
+      stroke-dasharray="${dash} ${C - dash}" transform="rotate(${activeRot} ${cx} ${cy})" filter="url(#${glowId})"/>`}
     <text x="${cx}" y="46" text-anchor="middle" class="thLabel">${label}</text>
     <text x="${cx}" y="72" text-anchor="middle" class="thValue">${cmdTxt}</text>
     <text x="${cx}" y="92" text-anchor="middle" class="thSub">${rpmTxt}</text>
   </svg>`;
 }
-
-
 export function renderMotorsRingsAdvanced(state){
   const thr = state.thr || {};
   const getCmd = (th) => (thr[th]?.CmdPct ?? null);
@@ -140,3 +146,4 @@ export function renderMotorsRingsAdvanced(state){
   setHTML("motors_left", left);
   setHTML("motors_right", right);
 }
+

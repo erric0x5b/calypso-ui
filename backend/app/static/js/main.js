@@ -1,5 +1,5 @@
 import * as utils from './utils.js';
-import { renderPowerScada, scadaSvg } from './power.js?v=15';
+import { scadaSvg } from './power.js?v=15';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js';
@@ -31,6 +31,7 @@ let vmotCmdBusy = false;
 let gpVmotHoldActive = false;
 let gpVmotHoldStartMs = 0;
 let gpVmotLastBeepSec = -1;
+let gpDeviceOptionsSignature = "";
 let autologCfg = { enabled: true, depth_m: null, hyst_m: null };
 
 const VMOT_ENABLE_HOLD_MS = 3000;
@@ -986,11 +987,8 @@ function render(state) {
     renderHelpAlarmLinks(state);
     handleAlarmBeep(state);
 
-    utils.setHTML("power_scada_badges", renderPowerScada(state));
-    const mb = document.getElementById("main_power_badges");
     const ms = document.getElementById("main_scada");
 
-    if (mb) mb.innerHTML = renderPowerScada(state);
     if (ms) ms.innerHTML = scadaSvg(state);
     renderVmotState(state);
     renderVmotCockpitWarning(state);
@@ -1171,7 +1169,6 @@ function requestRender() {
 // --- UI / widgets related functions (kept here for clarity) ---
 const WIDGETS = [
     { id: "alarms", title: "Allarmi" },
-    { id: "power", title: "Status" },
     { id: "lights", title: "Luci" },
     { id: "motors", title: "Motori" },
     { id: "missionlog", title: "Mission Log" },
@@ -1192,8 +1189,8 @@ uiPrefs.showLightsAck ??= true;
 uiPrefs.showAlarmBeep ??= true;
 uiPrefs.alarmFilter ??= "all";
 uiPrefs.alarmHistoryCollapsed ??= true;
+uiPrefs.gamepadIndex ??= -1;
 uiPrefs.collapsed.alarms ??= true;
-uiPrefs.collapsed.power ??= false;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.motors ??= true;
 uiPrefs.collapsed.missionlog ??= true;
@@ -1205,7 +1202,6 @@ if (uiPrefs.mainTabPresetVersion !== 3) {
 }
 if (uiPrefs.layoutPresetVersion !== 1) {
     uiPrefs.collapsed.alarms = true;
-    uiPrefs.collapsed.power = false;
     uiPrefs.collapsed.lights = false;
     uiPrefs.collapsed.motors = true;
     uiPrefs.collapsed.missionlog = true;
@@ -1488,7 +1484,6 @@ function setupSetupTab() {
             uiPrefs.mainTab = "vehicle";
             uiPrefs.visible = Object.fromEntries(WIDGETS.map((w) => [w.id, true]));
             uiPrefs.collapsed.alarms = true;
-            uiPrefs.collapsed.power = false;
             uiPrefs.collapsed.lights = false;
             uiPrefs.collapsed.motors = true;
             uiPrefs.collapsed.missionlog = true;
@@ -1522,10 +1517,14 @@ function setupSetupTab() {
                 const v = Number(sel?.value);
                 map[a.key] = Number.isInteger(v) ? v : a.def;
             }
+            const deviceSel = document.getElementById("setup_gp_device");
+            const deviceIdx = Number(deviceSel?.value);
             saveGpMap(map);
+            uiPrefs.gamepadIndex = Number.isInteger(deviceIdx) ? deviceIdx : -1;
+            saveUiPrefs(uiPrefs);
             syncSetupTab();
             const ack = document.getElementById("setup_gp_ack");
-            if (ack) ack.textContent = "Joystick mapping saved.";
+            if (ack) ack.textContent = "Joystick settings saved.";
         };
     }
 
@@ -1533,9 +1532,11 @@ function setupSetupTab() {
     if (resetGpBtn) {
         resetGpBtn.onclick = () => {
             saveGpMap({ ...GP_DEFAULT_MAP });
+            uiPrefs.gamepadIndex = -1;
+            saveUiPrefs(uiPrefs);
             syncSetupTab();
             const ack = document.getElementById("setup_gp_ack");
-            if (ack) ack.textContent = "Joystick mapping reset.";
+            if (ack) ack.textContent = "Joystick settings reset.";
         };
     }
 
@@ -1599,11 +1600,50 @@ function syncSetupTab() {
         const sel = document.getElementById(`setup_gp_${a.key}`);
         if (sel) sel.value = String(gpMap[a.key]);
     }
+    syncGamepadDeviceControl();
 }
 
 function setMainTab(tab) {
     const btn = document.querySelector(`.tab[data-tab="${tab}"]`);
     if (btn) btn.click();
+}
+
+function listConnectedGamepads() {
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
+    return pads.filter((x) => !!x);
+}
+
+function gamepadDeviceOptionsHtml(pads, selectedIndex) {
+    const sel = Number.isInteger(selectedIndex) ? selectedIndex : -1;
+    const rows = [`<option value="-1" ${sel < 0 ? "selected" : ""}>Auto (first connected)</option>`];
+    for (const gp of pads) {
+        const idx = Number(gp?.index);
+        const label = `#${idx} ${String(gp?.id || "Gamepad").trim() || "Gamepad"}`;
+        rows.push(`<option value="${idx}" ${idx === sel ? "selected" : ""}>${escapeHtml(label)}</option>`);
+    }
+    return rows.join("");
+}
+
+function syncGamepadDeviceControl(pads = null) {
+    const sel = document.getElementById("setup_gp_device");
+    if (!sel) return;
+    const list = Array.isArray(pads) ? pads.filter((x) => !!x) : listConnectedGamepads();
+    const signature = list.map((gp) => `${gp.index}:${gp.id}`).join("|");
+    const desired = Number.isInteger(uiPrefs.gamepadIndex) ? uiPrefs.gamepadIndex : -1;
+    if (signature !== gpDeviceOptionsSignature) {
+        gpDeviceOptionsSignature = signature;
+        sel.innerHTML = gamepadDeviceOptionsHtml(list, desired);
+    }
+    sel.value = String(desired);
+}
+
+function pickConfiguredGamepad(pads) {
+    const list = Array.isArray(pads) ? pads.filter((x) => !!x) : [];
+    const wanted = Number(uiPrefs.gamepadIndex);
+    if (Number.isInteger(wanted) && wanted >= 0) {
+        return list.find((gp) => Number(gp?.index) === wanted) || null;
+    }
+    return list[0] || null;
 }
 
 function cycleMainTab(delta) {
@@ -1750,20 +1790,29 @@ function setupJoystickControls() {
 
     const loop = () => {
         try {
-            const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
-            const gp = pads.find((x) => !!x);
+            const pads = listConnectedGamepads();
+            syncGamepadDeviceControl(pads);
+            const gp = pickConfiguredGamepad(pads);
             if (!gp) {
                 gpPrevButtons = [];
                 cancelGpVmotHold();
                 const status = document.getElementById("setup_gp_status");
-                if (status) status.textContent = "No gamepad connected.";
+                const wanted = Number(uiPrefs.gamepadIndex);
+                if (status) {
+                    status.textContent = wanted >= 0
+                        ? `Selected gamepad #${wanted} not connected.`
+                        : "No gamepad connected.";
+                }
                 requestAnimationFrame(loop);
                 return;
             }
 
             const buttons = (gp.buttons || []).map((b) => !!(b && b.pressed));
             const status = document.getElementById("setup_gp_status");
-            if (status) status.textContent = `Gamepad: ${gp.id} | buttons: ${buttons.length}`;
+            if (status) {
+                const mode = Number(uiPrefs.gamepadIndex) >= 0 ? "Selected" : "Auto";
+                status.textContent = `${mode}: #${gp.index} ${gp.id} | buttons: ${buttons.length}`;
+            }
 
             if (gamepadEdge(buttons, gpMap.tab_prev)) cycleMainTab(-1);
             if (gamepadEdge(buttons, gpMap.tab_next)) cycleMainTab(1);

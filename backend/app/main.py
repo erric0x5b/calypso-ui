@@ -485,6 +485,21 @@ def api_state():
 
 @app.get("/api/health")
 def api_health():
+    pods_summary = {}
+    for pod_name in ("BAT1", "BAT2"):
+        pod = state.get("pods", {}).get(pod_name, {}) or {}
+        node = state.get("nodes", {}).get(pod_name, {}) or {}
+        pods_summary[pod_name] = {
+            "online": pod.get("online", node.get("online")),
+            "last_hb_ms": node.get("last_hb_ms"),
+            "last_rx_ms": node.get("last_rx_ms"),
+            "bus_conn": pod.get("bus_conn", pod.get("BusConn")),
+            "vbatt_mv": pod.get("Vbatt_mv"),
+            "ibatt_ma": pod.get("Ibatt_ma"),
+            "vbus_mv": pod.get("Vbus_mv", pod.get("V48_mv")),
+            "par_state": pod.get("ParState"),
+            "vmot_reason": pod.get("VmotReason"),
+        }
     return {
         "ok": True,
         "udp_rx_port": UDP_RX_PORT,
@@ -492,6 +507,22 @@ def api_health():
         "counters": state["counters"],
         "last_update_ms": state["last_update_ms"],
         "nodes": {k: {"online": v.get("online"), "last_hb_ms": v.get("last_hb_ms")} for k, v in state["nodes"].items()},
+        "pods": pods_summary,
+        "udp": {
+            "listener_ok": udp_stats.listener_ok,
+            "bind": udp_stats.listener_bind,
+            "port": udp_stats.listener_port,
+            "error": udp_stats.listener_error,
+            "rx_total": udp_stats.rx_total,
+            "last_ts_ms": udp_stats.rx_last_ts_ms,
+            "last_from": udp_stats.rx_last_from,
+            "last_len": udp_stats.rx_last_len,
+            "last_msg": udp_stats.rx_last_msg,
+            "last_src": udp_stats.rx_last_src,
+            "last_dst": udp_stats.rx_last_dst,
+            "last_ck_ok": udp_stats.rx_last_ck_ok,
+            "last_prefix": udp_stats.rx_last_prefix,
+        },
         "autolog": state.get("autolog"),
     }
 

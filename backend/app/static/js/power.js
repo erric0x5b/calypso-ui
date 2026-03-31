@@ -32,11 +32,9 @@ export function renderPowerScada(state){
   const dvThr = (b1.dV_thr_mv ?? b2.dV_thr_mv);
   const reason = Number(b1.Reason ?? b2.Reason ?? 0);
   const parState = (b1.ParState ?? b2.ParState);
-  const parStateTxt = parStateLabel(parState);
   const vmotReason1 = Number(b1.VmotReason ?? 0);
   const vmotReason2 = Number(b2.VmotReason ?? 0);
   const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
-  const vmotReasonTxt = vmotReasonLabel(vmotReason);
 
   const dvBad = (dv != null && dvThr != null) ? (Number(dv) > Number(dvThr)) : false;
   const powerFault = (reason === 900) || (vmotReason !== 0) || dvBad;
@@ -72,20 +70,27 @@ export function renderPowerScada(state){
     return "ok";
   };
   const podText = (online, busConn) => (!online ? "OFFLINE" : (busConn ? "BUS ON" : "BUS OFF"));
-  const vbusKind = hasFault ? "bad" : (vbusOn ? "ok" : "warn");
-  const faultKind = hasFault ? "bad" : "ok";
-  const faultText = hasFault
-    ? `FAULT/ALARM (${alarmsActive}) PWR:${reason} VMOT:${vmotReason} - vedi scheda Allarmi`
-    : "No fault / no alarm";
+  const parallel = bus1 && bus2 && vbusOn;
+  const systemKind = hasFault ? "bad" : (parallel ? "ok" : "warn");
+  let systemText = "SYSTEM CHECK";
+  if (hasFault) {
+    const details = [];
+    if (alarmsActive > 0) details.push(`ALM ${alarmsActive}`);
+    if (reason !== 0) details.push(`PWR ${reason}`);
+    if (vmotReason !== 0) details.push(`VMOT ${vmotReason}`);
+    if (dvBad) details.push(`dV ${dv}/${dvThr}`);
+    systemText = details.length ? `FAULT ${details.join(" · ")}` : "FAULT";
+  } else if (parallel) {
+    systemText = "SYSTEM OK";
+  } else if (vbusOn) {
+    systemText = "VBUS ON";
+  }
 
     return `
-    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
       ${badge(podKind(online1, bus1), `POD1 ${podText(online1, bus1)}`)}
       ${badge(podKind(online2, bus2), `POD2 ${podText(online2, bus2)}`)}
-      ${badge(vbusKind, `VBUS ${vbusTxt}`)}
-      ${badge(hasFault ? "bad" : "info", `PAR ${parStateTxt}`)}
-      ${badge(vmotReason === 0 ? "ok" : "bad", `VMOT ${vmotReasonTxt}`)}
-      ${badge(faultKind, faultText)}
+      ${badge(systemKind, systemText)}
       ${socEstAny ? badge("warn", "SOC stimato da Vbatt (LiFePO4 14S)") : ""}
     </div>
   `;
@@ -145,7 +150,6 @@ export function scadaSvg(s) {
   const vmotReason1 = Number(b1.VmotReason ?? 0);
   const vmotReason2 = Number(b2.VmotReason ?? 0);
   const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
-  const vmotReasonTxt = vmotReasonLabel(vmotReason);
   const dvBad = (dv != null && dvThr != null) ? (Number(dv) > Number(dvThr)) : false;
   const fault = (reason === 900) || (vmotReason !== 0) || dvBad;
 
@@ -206,7 +210,7 @@ export function scadaSvg(s) {
   };
 
   /* BAT1 box */
-  const BAT1_X = 40, BAT1_Y = 60, BAT_W = 220, BAT_H = 190;
+  const BAT1_X = 54, BAT1_Y = 68, BAT_W = 204, BAT_H = 176;
   const BAT1_L = BAT1_X + 18;
   const BAT1_R = BAT1_X + BAT_W - 18;
   const BAT1_C = BAT1_X + BAT_W/2;
@@ -217,21 +221,21 @@ export function scadaSvg(s) {
         fill = "${BAT1_BG}" stroke = "${frameColor(bat1Kind)}" stroke-width="3"
         ${frameFilter(bat1Kind)} />
 
-      <text x="${BAT1_C}" y="${BAT1_Y+28}" font-size="14" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 55, "Vbatt", vb1) }
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 75, "Ibatt", ib1) }
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 95, socEst1 ? "SOC est" : "SOC", soc1View) }
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 115, "Temp", tb1) }
-      ${ row(BAT1_L, BAT1_R, BAT1_Y + 135, "BusConn", (c1 ? "ON" : "OFF")) }
+      <text x="${BAT1_C}" y="${BAT1_Y+26}" font-size="13" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 49, "Vbatt", vb1) }
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 67, "Ibatt", ib1) }
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 85, socEst1 ? "SOC est" : "SOC", soc1View) }
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 103, "Temp", tb1) }
+      ${ row(BAT1_L, BAT1_R, BAT1_Y + 121, "BusConn", (c1 ? "ON" : "OFF")) }
 
-      <text x="${BAT1_L}" y="${BAT1_Y+156}" font-size="12" font-weight="900" fill="${tMain}">VMOT</text>
-      ${ ledDot(BAT1_L + 10, BAT1_Y + 174, v1, "VMOT1") }
-      ${ ledDot(BAT1_L + 78, BAT1_Y + 174, v2, "VMOT2") }
-      ${ ledDot(BAT1_L + 146, BAT1_Y + 174, v3, "VMOT3") }
+      <text x="${BAT1_L}" y="${BAT1_Y+142}" font-size="11" font-weight="900" fill="${tMain}">VMOT</text>
+      ${ ledDot(BAT1_L + 8, BAT1_Y + 158, v1, "VMOT1") }
+      ${ ledDot(BAT1_L + 70, BAT1_Y + 158, v2, "VMOT2") }
+      ${ ledDot(BAT1_L + 132, BAT1_Y + 158, v3, "VMOT3") }
     `;
 
   /* BAT2 box */
-  const BAT2_X = 640, BAT2_Y = 60;
+  const BAT2_X = 642, BAT2_Y = 68;
   const BAT2_L = BAT2_X + 18;
   const BAT2_R = BAT2_X + BAT_W - 18;
   const BAT2_C = BAT2_X + BAT_W/2;
@@ -242,22 +246,22 @@ export function scadaSvg(s) {
       fill = "${BAT2_BG}" stroke = "${frameColor(bat2Kind)}" stroke-width="3"
       ${frameFilter(bat2Kind)} />
 
-      <text x="${BAT2_C}" y="${BAT2_Y+28}" font-size="14" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 55, "Vbatt", vb2) }
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 75, "Ibatt", ib2) }
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 95, socEst2 ? "SOC est" : "SOC", soc2View) }
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 115, "Temp", tb2) }
-      ${ row(BAT2_L, BAT2_R, BAT2_Y + 135, "BusConn", (c2 ? "ON" : "OFF")) }
+      <text x="${BAT2_C}" y="${BAT2_Y+26}" font-size="13" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 49, "Vbatt", vb2) }
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 67, "Ibatt", ib2) }
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 85, socEst2 ? "SOC est" : "SOC", soc2View) }
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 103, "Temp", tb2) }
+      ${ row(BAT2_L, BAT2_R, BAT2_Y + 121, "BusConn", (c2 ? "ON" : "OFF")) }
 
-      <text x="${BAT2_L}" y="${BAT2_Y+156}" font-size="12" font-weight="900" fill="${tMain}">VMOT</text>
-      ${ ledDot(BAT2_L + 10, BAT2_Y + 174, v4, "VMOT4") }
-      ${ ledDot(BAT2_L + 78, BAT2_Y + 174, v5, "VMOT5") }
-      ${ ledDot(BAT2_L + 146, BAT2_Y + 174, v6, "VMOT6") }
+      <text x="${BAT2_L}" y="${BAT2_Y+142}" font-size="11" font-weight="900" fill="${tMain}">VMOT</text>
+      ${ ledDot(BAT2_L + 8, BAT2_Y + 158, v4, "VMOT4") }
+      ${ ledDot(BAT2_L + 70, BAT2_Y + 158, v5, "VMOT5") }
+      ${ ledDot(BAT2_L + 132, BAT2_Y + 158, v6, "VMOT6") }
     `;
 
   return `
   
-  <svg viewBox="0 0 900 420" preserveAspectRatio="xMidYMid meet">
+  <svg viewBox="0 0 900 380" preserveAspectRatio="xMidYMid meet">
     <defs>
       <style>
         .scadaFrame { stroke-linejoin: round; }
@@ -318,42 +322,42 @@ export function scadaSvg(s) {
     ${bat2Block}  
 
     <!-- VBUS box (center) -->
-    <rect x="360" y="95" width="180" height="90" rx="14" ry="14"
+    <rect x="372" y="104" width="156" height="76" rx="14" ry="14"
       fill="rgba(255,255,255,0.04)"
       class="scadaFrame ${vbusKind === "off" ? "" : "pulse"}"
       stroke="${frameColor(vbusKind)}" stroke-width="3"
       ${frameFilter(vbusKind)} />
 
-    <text x="${VBUS_CX}" y="125" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">VBUS</text>
-    <text x="${VBUS_CX}" y="150" font-size="14" fill="${tMuted}" text-anchor="middle">Vbus: ${vbusTxt}</text>
-    <text x="${VBUS_CX}" y="175" font-size="14" fill="${tMuted}" text-anchor="middle">
+    <text x="${VBUS_CX}" y="130" font-size="15" font-weight="900" fill="${tMain}" text-anchor="middle">VBUS</text>
+    <text x="${VBUS_CX}" y="151" font-size="12" fill="${tMuted}" text-anchor="middle">Vbus: ${vbusTxt}</text>
+    <text x="${VBUS_CX}" y="170" font-size="12" fill="${tMuted}" text-anchor="middle">
       ${fault ? `FAULT (PWR ${reason}, VMOT ${vmotReason}${dvBad ? `, dV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"} - ${parStateTxt}`}
     </text>
     <!-- Lines -->
-    <line x1="260" y1="140" x2="360" y2="140"
+    <line x1="258" y1="142" x2="372" y2="142"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link1Kind)}" stroke-width="10" stroke-linecap="round"
+      stroke="${frameColor(link1Kind)}" stroke-width="9" stroke-linecap="round"
       ${frameFilter(link1Kind)} />
-    <circle cx="310" cy="140" r="10"
+    <circle cx="315" cy="142" r="9"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link1Kind)}" ${frameFilter(link1Kind)} />
 
-    <line x1="540" y1="140" x2="640" y2="140"
+    <line x1="528" y1="142" x2="642" y2="142"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link2Kind)}" stroke-width="10" stroke-linecap="round"
+      stroke="${frameColor(link2Kind)}" stroke-width="9" stroke-linecap="round"
       ${frameFilter(link2Kind)} />
-    <circle cx="590" cy="140" r="10"
+    <circle cx="585" cy="142" r="9"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link2Kind)}" ${frameFilter(link2Kind)} />
 
     <!-- Parallel badge -->
-    <rect x="360" y="230" width="180" height="50" rx="25" ry="25"
+    <rect x="372" y="220" width="156" height="42" rx="21" ry="21"
       fill="rgba(255,255,255,0.04)"
       class="scadaFrame ${parKind === "off" ? "" : "pulse"}"
       stroke="${frameColor(parKind)}" stroke-width="3"
       ${frameFilter(parKind)} />
 
-    <text x="${PAR_CX}" y="262" font-size="16" font-weight="900" fill="${frameColor(parKind)}" text-anchor="middle">
+    <text x="${PAR_CX}" y="246" font-size="14" font-weight="900" fill="${frameColor(parKind)}" text-anchor="middle">
       PARALLEL: ${parallel ? "ON" : "OFF"}
     </text>
   </svg>`;
