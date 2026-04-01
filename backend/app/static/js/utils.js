@@ -66,16 +66,52 @@ export function parStateLabel(x) {
   return m[x] || `PAR_${x ?? "?"}`;
 }
 
-export function vmotReasonLabel(v) {
-  const m = {
-    0: "VMOT_REASON_OK",
-    1: "VMOT_REASON_IO_NOT_READY",
-    101: "VMOT_REASON_CH1_RDY_FAIL",
-    102: "VMOT_REASON_CH2_RDY_FAIL",
-    103: "VMOT_REASON_CH3_RDY_FAIL",
-    201: "VMOT_REASON_CH1_FAULT",
-    202: "VMOT_REASON_CH2_FAULT",
-    203: "VMOT_REASON_CH3_FAULT",
+const POWER_REASON_MAP = {
+  0: { label: "Normal / parallel allowed", meaning: "Normale: parallelo consentito." },
+  5: { label: "Manual override", meaning: "Override manuale attivo." },
+  10: { label: "Bootstrap wait peer", meaning: "Bootstrap: attesa del peer." },
+  20: { label: "BAT1 self primary, dV high", meaning: "BAT1 primaria isolata: delta tensione alto." },
+  21: { label: "BAT2 self primary, dV high", meaning: "BAT2 primaria isolata: delta tensione alto." },
+  22: { label: "CPU1 primary, CPU2 isolated", meaning: "CPU1 primaria, CPU2 isolata." },
+  30: { label: "Handoff wait peer bus", meaning: "Handoff in attesa del bus del peer." },
+  31: { label: "Peer primary active", meaning: "Peer primario attivo." },
+  40: { label: "VBUS low fallback", meaning: "Fallback attivato per VBUS basso." },
+  50: { label: "Hold minimum ON dwell", meaning: "Tempo minimo di permanenza ON ancora attivo." },
+  51: { label: "Hold minimum OFF dwell", meaning: "Tempo minimo di permanenza OFF ancora attivo." },
+  900: { label: "Fault active (PowerSM forced OFF)", meaning: "Fault attivo: PowerSM forza OFF." },
+};
+
+const VMOT_REASON_MAP = {
+  0: { label: "VMOT_REASON_OK", meaning: "Sequenza VMOT completata senza errori." },
+  1: { label: "VMOT_REASON_IO_NOT_READY", meaning: "I/O non pronto all'avvio sequenza VMOT." },
+  101: { label: "VMOT_REASON_CH1_RDY_FAIL", meaning: "CH1 acceso ma VMotRdy non valido." },
+  102: { label: "VMOT_REASON_CH2_RDY_FAIL", meaning: "CH2 acceso ma VMotRdy non valido." },
+  103: { label: "VMOT_REASON_CH3_RDY_FAIL", meaning: "CH3 acceso ma VMotRdy non valido." },
+  201: { label: "VMOT_REASON_CH1_FAULT", meaning: "Fault rilevato su CH1." },
+  202: { label: "VMOT_REASON_CH2_FAULT", meaning: "Fault rilevato su CH2." },
+  203: { label: "VMOT_REASON_CH3_FAULT", meaning: "Fault rilevato su CH3." },
+};
+
+export function powerReasonInfo(v) {
+  const key = Number(v);
+  return POWER_REASON_MAP[key] || {
+    label: `PWR_REASON_${v ?? "?"}`,
+    meaning: "Codice Reason non documentato.",
   };
-  return m[v] || `VMOT_REASON_${v ?? "?"}`;
+}
+
+export function powerReasonLabel(v) {
+  return powerReasonInfo(v).label;
+}
+
+export function vmotReasonInfo(v) {
+  const key = Number(v);
+  return VMOT_REASON_MAP[key] || {
+    label: `VMOT_REASON_${v ?? "?"}`,
+    meaning: "Codice VMOT Reason non documentato.",
+  };
+}
+
+export function vmotReasonLabel(v) {
+  return vmotReasonInfo(v).label;
 }

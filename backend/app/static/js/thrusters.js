@@ -1,4 +1,4 @@
-import { setHTML } from './utils.js';
+import { setHTML } from './utils.js?v=16';
 
 export const THR_MAP = [
   { name:"TH1", th:"TH1", escId:1, label:"1", pos:"FL", side:"L", order:1 },

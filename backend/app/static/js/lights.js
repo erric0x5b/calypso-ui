@@ -1,4 +1,4 @@
-import { el as domEl } from './utils.js';
+import { el as domEl } from './utils.js?v=16';
 
 export let lightsCfg = null;
 const ACK_TIMEOUT_MS = 2000;

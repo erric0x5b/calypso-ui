@@ -359,6 +359,22 @@
         <div class="mono" style="margin-top:10px;">
           Comandi: VMOT usa CMD Type=VMOT con ACK; bridge luci (Type=LGT) viene inoltrato senza ACK firmware.
         </div>
+        <div style="margin-top:10px;"><b>PowerSM Reason Codes</b></div>
+        <table>
+          <tr><th>Code</th><th>Significato</th></tr>
+          <tr><td>0</td><td>Normale: parallelo consentito.</td></tr>
+          <tr><td>5</td><td>Override manuale attivo.</td></tr>
+          <tr><td>10</td><td>Bootstrap: attesa del peer.</td></tr>
+          <tr><td>20</td><td>BAT1 primaria isolata: delta tensione alto.</td></tr>
+          <tr><td>21</td><td>BAT2 primaria isolata: delta tensione alto.</td></tr>
+          <tr><td>22</td><td>CPU1 primaria, CPU2 isolata.</td></tr>
+          <tr><td>30</td><td>Handoff in attesa del bus del peer.</td></tr>
+          <tr><td>31</td><td>Peer primario attivo.</td></tr>
+          <tr><td>40</td><td>Fallback attivato per VBUS basso.</td></tr>
+          <tr><td>50</td><td>Tempo minimo di permanenza ON ancora attivo.</td></tr>
+          <tr><td>51</td><td>Tempo minimo di permanenza OFF ancora attivo.</td></tr>
+          <tr><td>900</td><td>Fault attivo: PowerSM forza OFF.</td></tr>
+        </table>
         <div style="margin-top:10px;"><b>VMOT Reason Codes</b></div>
         <table>
           <tr><th>Code</th><th>Nome</th><th>Significato</th></tr>
@@ -371,6 +387,8 @@
           <tr><td>202</td><td>VMOT_REASON_CH2_FAULT</td><td>Fault rilevato su CH2.</td></tr>
           <tr><td>203</td><td>VMOT_REASON_CH3_FAULT</td><td>Fault rilevato su CH3.</td></tr>
         </table>
+        <div style="margin-top:10px;"><b>Diagnostica Power/VMOT Attiva</b></div>
+        <div id="help_power_reasons" class="mono" style="margin-top:6px;">Nessuna causa power/VMOT attiva.</div>
         <div style="margin-top:10px;"><b>Allarmi Attivi Mappati</b></div>
         <div id="help_alarm_links" class="mono" style="margin-top:6px;">Nessun allarme attivo.</div>
         <div class="mono" style="margin-top:10px;">
@@ -388,7 +406,7 @@
   }
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
-  <script type="module" src="js/main.js?v=15"></script>
+  <script type="module" src="js/main.js?v=16"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 

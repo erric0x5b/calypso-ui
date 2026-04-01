@@ -1,5 +1,5 @@
-import * as utils from './utils.js';
-import { scadaSvg } from './power.js?v=15';
+import * as utils from './utils.js?v=16';
+import { scadaSvg } from './power.js?v=16';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js';
@@ -637,6 +637,78 @@ function setupAlarmPanelControls() {
     applyAlarmPanelPrefs();
 }
 
+function currentPowerTelemetry(state) {
+    const b1 = state?.pods?.BAT1 || {};
+    const b2 = state?.pods?.BAT2 || {};
+    const reason = Number(b1.Reason ?? b2.Reason ?? 0);
+    const vmotReason1 = Number(b1.VmotReason ?? 0);
+    const vmotReason2 = Number(b2.VmotReason ?? 0);
+    const vmotReason = vmotReason1 !== 0 ? vmotReason1 : vmotReason2;
+    const dv = Number(b1.dV_mv ?? b2.dV_mv);
+    const dvThr = Number(b1.dV_thr_mv ?? b2.dV_thr_mv);
+    const dvKnown = Number.isFinite(dv) && Number.isFinite(dvThr);
+    return {
+        reason,
+        vmotReason,
+        dv: dvKnown ? dv : null,
+        dvThr: dvKnown ? dvThr : null,
+        dvBad: dvKnown ? dv > dvThr : false,
+    };
+}
+
+function describeCurrentPowerCauses(state) {
+    const diag = currentPowerTelemetry(state);
+    const rows = [];
+    if (diag.reason !== 0) {
+        const info = utils.powerReasonInfo(diag.reason);
+        rows.push({
+            code: `Reason ${diag.reason}`,
+            label: info.label,
+            meaning: info.meaning,
+        });
+    }
+    if (diag.vmotReason !== 0) {
+        const info = utils.vmotReasonInfo(diag.vmotReason);
+        rows.push({
+            code: `VmotReason ${diag.vmotReason}`,
+            label: info.label,
+            meaning: info.meaning,
+        });
+    }
+    if (diag.dvBad) {
+        rows.push({
+            code: "dV",
+            label: `${diag.dv} mV > ${diag.dvThr} mV`,
+            meaning: "Delta tensione oltre la soglia telemetrica dV_thr_mv.",
+        });
+    }
+    return rows;
+}
+
+function alarmNeedsPowerCause(alarm) {
+    const idNum = Number(alarm?.id);
+    if (idNum === 300 || idNum === 310 || idNum === 320) return true;
+
+    const txt = String(alarm?.text || "");
+    return /PWR|POWER|VMOT|VBUS|DV|DELTA.?V|BUSCONN|FAULT/i.test(txt);
+}
+
+function renderHelpPowerReasons(state) {
+    const box = document.getElementById("help_power_reasons");
+    if (!box) return;
+
+    const rows = describeCurrentPowerCauses(state);
+    if (!rows.length) {
+        box.innerHTML = "Nessuna causa power/VMOT attiva.";
+        return;
+    }
+
+    box.innerHTML = rows.map((row) => `
+        <div><b>${escapeHtml(row.code)}</b> ${escapeHtml(row.label)}</div>
+        <div style="opacity:.85;">${escapeHtml(row.meaning)}</div>
+    `).join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.08);margin:8px 0;\">");
+}
+
 function renderHelpAlarmLinks(state) {
     const box = document.getElementById("help_alarm_links");
     if (!box) return;
@@ -653,10 +725,15 @@ function renderHelpAlarmLinks(state) {
         const idTxt = (a?.id == null ? "-" : String(a.id));
         const txt = String(a?.text || "");
         const base = `<div><b>[${sev}] ID ${idTxt}</b> ${txt || "-"}</div>`;
+        const powerCauses = alarmNeedsPowerCause(a)
+            ? describeCurrentPowerCauses(state).map((row) => (
+                `<div style="opacity:.85;">Causa telemetria: <b>${escapeHtml(row.code)}</b> ${escapeHtml(row.label)}. ${escapeHtml(row.meaning)}</div>`
+            )).join("")
+            : "";
         if (!g) {
-            return `${base}<div style="opacity:.85;">Azione: verifica scheda Allarmi e log firmware (ID non mappato).</div>`;
+            return `${base}${powerCauses}<div style="opacity:.85;">Azione: verifica scheda Allarmi e log firmware (ID non mappato).</div>`;
         }
-        return `${base}<div style="opacity:.85;">${g.label}: ${g.meaning}</div><div style="opacity:.95;">Azione: ${g.action}</div>`;
+        return `${base}<div style="opacity:.85;">${g.label}: ${g.meaning}</div>${powerCauses}<div style="opacity:.95;">Azione: ${g.action}</div>`;
     });
     box.innerHTML = rows.join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.08);margin:8px 0;\">");
 }
@@ -1014,6 +1091,7 @@ function render(state) {
         ? `<div class="alarmList">${hist.map((a) => renderAlarmItem(a, { history: true })).join("")}</div>`
         : `<div class="ok">none</div>`);
     applyAlarmPanelPrefs();
+    renderHelpPowerReasons(state);
     renderHelpAlarmLinks(state);
     handleAlarmBeep(state);
 

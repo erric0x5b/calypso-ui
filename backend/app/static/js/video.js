@@ -1,4 +1,4 @@
-import { el, setText } from './utils.js';
+import { el, setText } from './utils.js?v=16';
 
 export let videoState = { kind: "mjpeg", url: "" };
 

@@ -1,4 +1,4 @@
-import { el } from "./utils.js";
+import { el } from "./utils.js?v=16";
 
 let selectedSids = new Set();
 let logStatus = { enabled: false, sid: "" };
