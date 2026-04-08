@@ -144,11 +144,13 @@
           <div class="cardBody">
             <div class="videoToolbar">
               <select id="video_source">
+                <option value="auto">AUTO</option>
+                <option value="rtsp">RTSP (proxy)</option>
                 <option value="mjpeg">MJPEG</option>
                 <option value="video">VIDEO (mp4/webrtc/hls*)</option>
               </select>
 
-              <input id="video_url" type="text" placeholder="URL stream (es: /static/demo.mp4 o http://...)" />
+              <input id="video_url" type="text" placeholder="URL stream (es: rtsp://..., /static/demo.mp4, http://...)" />
 
               <button id="video_apply">APPLY</button>
               <button id="video_stop">STOP</button>
@@ -159,7 +161,7 @@
             </div>
 
             <div class="mono" style="margin-top:10px;opacity:.75">
-              *HLS: su molti browser desktop serve hls.js (lo aggiungiamo dopo se serve).
+              *RTSP viene convertito dal backend in MJPEG. Nel container deve essere presente `ffmpeg`.
             </div>
           </div>
         </div>
@@ -406,11 +408,10 @@
   }
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
-  <script type="module" src="js/main.js?v=16"></script>
+  <script type="module" src="js/main.js?v=17"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 
 </html>
-
 
 
