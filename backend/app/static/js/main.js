@@ -2,7 +2,7 @@ import * as utils from './utils.js?v=16';
 import { scadaSvg } from './power.js?v=16';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js';
+import * as video from './video.js?v=17';
 import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
@@ -2001,5 +2001,4 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 export { render, init };
-
 

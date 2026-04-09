@@ -5,6 +5,7 @@ WORKDIR /app
 # Toolchain minima per buildare dipendenze native anche su arm/v7.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ffmpeg \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \

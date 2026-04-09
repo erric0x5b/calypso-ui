@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket
 import threading
 import time
@@ -14,8 +15,9 @@ import zipfile
 from collections import deque
 from datetime import datetime
 from typing import Optional, Set
+from urllib.parse import urlparse
 
-from fastapi import Body, FastAPI, HTTPException, WebSocket
+from fastapi import Body, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -61,6 +63,10 @@ OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
 AUTOLOG_ENABLED_DEFAULT = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
 AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
+FFMPEG_BIN = os.getenv("CALYPSO_FFMPEG_BIN", "ffmpeg")
+RTSP_PROXY_TRANSPORT = os.getenv("CALYPSO_RTSP_TRANSPORT", "tcp").strip().lower() or "tcp"
+RTSP_PROXY_FPS = max(1, int(os.getenv("CALYPSO_RTSP_MJPEG_FPS", "10")))
+RTSP_PROXY_QSCALE = max(2, int(os.getenv("CALYPSO_RTSP_MJPEG_QSCALE", "7")))
 
 MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
 MAVLINK_PORT = int(os.getenv("MAVLINK_PORT", "8080"))
@@ -118,6 +124,129 @@ def register_service():
         "webpage": "/ui",
         "api": "/docs",
     }
+
+
+def is_rtsp_url(url: str) -> bool:
+    try:
+        return urlparse(url).scheme.lower() in {"rtsp", "rtsps"}
+    except Exception:
+        return False
+
+
+async def drain_ffmpeg_stderr(stream: asyncio.StreamReader):
+    while True:
+        line = await stream.readline()
+        if not line:
+            return
+        msg = line.decode("utf-8", "replace").strip()
+        if msg:
+            py_logging.info("[video/ffmpeg] %s", msg)
+
+
+def encode_mjpeg_part(frame: bytes) -> bytes:
+    header = (
+        b"--frame\r\n"
+        b"Content-Type: image/jpeg\r\n"
+        + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+    )
+    return header + frame + b"\r\n"
+
+
+async def rtsp_to_mjpeg_stream(url: str, request: Request):
+    ffmpeg_path = shutil.which(FFMPEG_BIN) if os.path.sep not in FFMPEG_BIN else FFMPEG_BIN
+    if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+        raise HTTPException(status_code=503, detail="ffmpeg not available")
+
+    cmd = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-rtsp_transport",
+        RTSP_PROXY_TRANSPORT,
+        "-fflags",
+        "nobuffer",
+        "-flags",
+        "low_delay",
+        "-i",
+        url,
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf",
+        f"fps={RTSP_PROXY_FPS}",
+        "-q:v",
+        str(RTSP_PROXY_QSCALE),
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "pipe:1",
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="ffmpeg not available") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"cannot start ffmpeg: {exc}") from exc
+
+    stderr_task = asyncio.create_task(drain_ffmpeg_stderr(proc.stderr))
+
+    async def gen():
+        buffer = bytearray()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    chunk = await asyncio.wait_for(proc.stdout.read(65536), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if proc.returncode is not None:
+                        break
+                    continue
+
+                if not chunk:
+                    if proc.returncode is not None:
+                        break
+                    continue
+
+                buffer.extend(chunk)
+
+                while True:
+                    start = buffer.find(b"\xff\xd8")
+                    if start < 0:
+                        if len(buffer) > 2:
+                            del buffer[:-2]
+                        break
+                    if start > 0:
+                        del buffer[:start]
+
+                    end = buffer.find(b"\xff\xd9", 2)
+                    if end < 0:
+                        if len(buffer) > 4_000_000:
+                            del buffer[:-2_000_000]
+                        break
+
+                    frame = bytes(buffer[:end + 2])
+                    del buffer[:end + 2]
+                    yield encode_mjpeg_part(frame)
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+            await stderr_task
+
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.get("/docs.json", include_in_schema=False)
 def docs_json():
@@ -859,6 +988,16 @@ def api_log_zip(sid: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/video/rtsp-proxy")
+async def api_video_rtsp_proxy(url: str, request: Request):
+    video_url = (url or "").strip()
+    if not video_url:
+        raise HTTPException(status_code=400, detail="missing url")
+    if not is_rtsp_url(video_url):
+        raise HTTPException(status_code=400, detail="only rtsp/rtsps urls are supported")
+    return await rtsp_to_mjpeg_stream(video_url, request)
 
 @app.post("/api/log/zip_many")
 def api_log_zip_many(payload: dict = Body(...)):
