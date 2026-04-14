@@ -1263,6 +1263,36 @@ svg.thRing {
   display: block;
 }
 
+.sonarToolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.sonarRangeControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sonarRangeControl input {
+  width: 76px;
+}
+
+.sonarHeadingLock {
+  margin-left: auto;
+}
+
+#sonarCanvas {
+  background: #050914;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+}
+
 @media (max-width: 1100px) {
   .videoPresetGrid {
     grid-template-columns: 1fr;
@@ -1322,6 +1352,30 @@ svg.thRing {
   font-weight: 800;
 }
 
+.setupField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.setupField span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.setupField input,
+.setupField select {
+  width: 100%;
+  min-width: 0;
+}
+
+.sonarCfgGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .setupCheck {
   display: flex;
   align-items: center;
@@ -1378,7 +1432,17 @@ svg.thRing {
     grid-template-columns: 1fr;
   }
 
+  .sonarCfgGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .setupGpRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .sonarCfgGrid {
     grid-template-columns: 1fr;
   }
 }

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=16">
+  <link rel="stylesheet" href="app.css?v=18">
 </head>
 
 <body>
@@ -165,6 +165,23 @@
         <div class="card">
           <div class="cardHead"><div class="cardTitle">SONAR</div></div>
           <div class="cardBody">
+            <div class="sonarToolbar">
+              <span class="pill" id="sonar_status">PING360 WAIT</span>
+              <span class="mono" id="sonar_last_angle">angle: -</span>
+              <span class="mono" id="sonar_last_samples">samples: -</span>
+              <span class="mono" id="sonar_range_label">range: -</span>
+              <button id="sonar_start">START</button>
+              <button id="sonar_stop">STOP</button>
+              <label class="sonarRangeControl">
+                <span>Range m</span>
+                <input id="sonar_range_m" type="number" min="1" max="100" step="1" />
+              </label>
+              <button id="sonar_range_apply">APPLY RANGE</button>
+              <label class="setupCheck sonarHeadingLock">
+                <input type="checkbox" id="sonar_heading_lock">
+                Heading lock
+              </label>
+            </div>
             <canvas id="sonarCanvas" width="800" height="600" style="width:100%;height:60vh;"></canvas>
           </div>
         </div>
@@ -234,6 +251,78 @@
                 <div class="setupActions">
                   <button id="setup_alarm_beep_test">TEST BEEP</button>
                 </div>
+              </section>
+
+              <section class="setupCard setupCardWide">
+                <h3 class="setupTitle">Ping360 Sonar</h3>
+                <label class="setupCheck"><input type="checkbox" id="sonar_cfg_enabled"> Enable Ping360 scan</label>
+                <div class="sonarCfgGrid">
+                  <label class="setupField">
+                    <span>Host</span>
+                    <input id="sonar_cfg_host" type="text" placeholder="blueos" />
+                  </label>
+                  <label class="setupField">
+                    <span>Fallback IP</span>
+                    <input id="sonar_cfg_fallback_ip" type="text" placeholder="192.168.2.2" />
+                  </label>
+                  <label class="setupField">
+                    <span>Port</span>
+                    <input id="sonar_cfg_port" type="number" min="1" max="65535" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Device ID</span>
+                    <input id="sonar_cfg_device_id" type="number" min="1" max="254" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Gain</span>
+                    <select id="sonar_cfg_gain_setting">
+                      <option value="0">Low</option>
+                      <option value="1">Normal</option>
+                      <option value="2">High</option>
+                    </select>
+                  </label>
+                  <label class="setupField">
+                    <span>Transmit us</span>
+                    <input id="sonar_cfg_transmit_duration_us" type="number" min="1" max="1000" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Sample period</span>
+                    <input id="sonar_cfg_sample_period_25ns" type="number" min="80" max="40000" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Frequency kHz</span>
+                    <input id="sonar_cfg_frequency_khz" type="number" min="500" max="1000" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Samples</span>
+                    <input id="sonar_cfg_num_samples" type="number" min="200" max="1200" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Range m</span>
+                    <input id="sonar_cfg_range_m" type="number" min="1" max="100" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Start grad</span>
+                    <input id="sonar_cfg_start_angle_grad" type="number" min="0" max="399" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Stop grad</span>
+                    <input id="sonar_cfg_stop_angle_grad" type="number" min="0" max="399" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Step</span>
+                    <input id="sonar_cfg_num_steps" type="number" min="1" max="10" step="1" />
+                  </label>
+                  <label class="setupField">
+                    <span>Delay ms</span>
+                    <input id="sonar_cfg_delay_ms" type="number" min="0" max="100" step="1" />
+                  </label>
+                </div>
+                <div class="setupActions">
+                  <button id="sonar_cfg_save">Save Ping360</button>
+                  <button id="sonar_cfg_reload">Reload</button>
+                </div>
+                <div class="mono" id="sonar_cfg_status">-</div>
               </section>
 
               <section class="setupCard setupCardWide">
@@ -457,8 +546,8 @@
   }
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
-  <script type="module" src="js/main.js?v=18"></script>
-  <script src="sonar_ping360.js?v=1" defer></script>
+  <script src="sonar_ping360.js?v=4" defer></script>
+  <script type="module" src="js/main.js?v=20"></script>
 </body>
 
 </html>

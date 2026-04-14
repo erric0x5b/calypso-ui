@@ -192,6 +192,8 @@ export function scadaSvg(s) {
 
   const VBUS_CX = 360 + 180 / 2;
   const PAR_CX = 360 + 180 / 2;
+  const BUS_LINK_WIDTH = 14;
+  const BUS_LINK_NODE_R = 11;
 
   const row = (xL, xR, y, label, value) => `
     <text x="${xL}" y="${y}" font-size="12" fill="${tMuted}">${label}</text>
@@ -336,17 +338,17 @@ export function scadaSvg(s) {
     <!-- Lines -->
     <line x1="258" y1="142" x2="372" y2="142"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link1Kind)}" stroke-width="9" stroke-linecap="round"
+      stroke="${frameColor(link1Kind)}" stroke-width="${BUS_LINK_WIDTH}" stroke-linecap="round"
       ${frameFilter(link1Kind)} />
-    <circle cx="315" cy="142" r="9"
+    <circle cx="315" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link1Kind)}" ${frameFilter(link1Kind)} />
 
     <line x1="528" y1="142" x2="642" y2="142"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link2Kind)}" stroke-width="9" stroke-linecap="round"
+      stroke="${frameColor(link2Kind)}" stroke-width="${BUS_LINK_WIDTH}" stroke-linecap="round"
       ${frameFilter(link2Kind)} />
-    <circle cx="585" cy="142" r="9"
+    <circle cx="585" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link2Kind)}" ${frameFilter(link2Kind)} />
 

@@ -440,8 +440,32 @@ def parse_nmea_line(line: str):
 load_lights_cfg = lights_cfg.load_lights_cfg
 save_lights_cfg = lights_cfg.save_lights_cfg
 
-# Ping360 stop flag
-ping360_stop = asyncio.Event()
+# Ping360 runtime
+ping360_stop: Optional[asyncio.Event] = None
+ping360_task_handle: Optional[asyncio.Task] = None
+
+def start_ping360_runtime():
+    global ping360_stop, ping360_task_handle
+    ping360_stop = asyncio.Event()
+    ping360_task_handle = asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
+
+async def stop_ping360_runtime():
+    global ping360_stop, ping360_task_handle
+    if ping360_stop is not None:
+        ping360_stop.set()
+    if ping360_task_handle is not None and not ping360_task_handle.done():
+        try:
+            await asyncio.wait_for(ping360_task_handle, timeout=2.0)
+        except asyncio.TimeoutError:
+            ping360_task_handle.cancel()
+        except Exception:
+            pass
+    ping360_stop = None
+    ping360_task_handle = None
+
+async def restart_ping360_runtime():
+    await stop_ping360_runtime()
+    start_ping360_runtime()
 
 # UDP TX socket (created at import time is fine)
 udp_tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -568,7 +592,7 @@ async def startup():
     asyncio.create_task(autolog_watchdog())
 
     # Ping360 task
-    asyncio.create_task(ping360_task(state, ws_broadcast, ping360_stop))
+    start_ping360_runtime()
     
     MAVLINK_UDP_ENABLED = False
 
@@ -587,6 +611,10 @@ async def startup():
         print("[mavlink] disabled or no available transport")
 
     # TODO(spec TODO-IMPL-MAVLINK-BRIDGE): publish selected telemetry/alarm subset to BlueOS/Cockpit once dataset is finalized.
+
+@app.on_event("shutdown")
+async def shutdown():
+    await stop_ping360_runtime()
 
 # ----------------------------
 # API
@@ -1239,9 +1267,29 @@ def get_ping360_cfg():
     return ping360_load_cfg()
 
 @app.post("/api/sonar/ping360/config")
-def set_ping360_cfg(cfg: dict = Body(...)):
+async def set_ping360_cfg(cfg: dict = Body(...)):
     ping360_save_cfg(cfg)
-    return {"ok": True}
+    await restart_ping360_runtime()
+    return {"ok": True, "config": ping360_load_cfg()}
+
+@app.post("/api/sonar/ping360/start")
+async def start_ping360(cfg: dict = Body(default={})):
+    merged = {**ping360_load_cfg(), **(cfg or {}), "enabled": True}
+    ping360_save_cfg(merged)
+    await restart_ping360_runtime()
+    return {"ok": True, "config": ping360_load_cfg()}
+
+@app.post("/api/sonar/ping360/stop")
+async def stop_ping360():
+    cfg = {**ping360_load_cfg(), "enabled": False}
+    ping360_save_cfg(cfg)
+    await stop_ping360_runtime()
+    state.setdefault("sonar", {}).setdefault("ping360", {}).update({
+        "enabled": False,
+        "connected": False,
+        "scanning": False,
+    })
+    return {"ok": True, "config": ping360_load_cfg()}
 
 # ----------------------------
 # MAVLink readers (unchanged)

@@ -1,5 +1,5 @@
 import * as utils from './utils.js?v=16';
-import { scadaSvg } from './power.js?v=16';
+import { scadaSvg } from './power.js?v=17';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js?v=18';
@@ -33,11 +33,28 @@ let gpVmotHoldStartMs = 0;
 let gpVmotLastBeepSec = -1;
 let gpDeviceOptionsSignature = "";
 let autologCfg = { enabled: true, depth_m: null, hyst_m: null };
+let sonarCfg = null;
 
 const VMOT_ENABLE_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
 const VMOT_ACK_POLL_MS = 120;
 const ALARM_FILTERS = new Set(["all", "crit", "error", "warn"]);
+const SONAR_CFG_FIELDS = [
+    "host",
+    "fallback_ip",
+    "port",
+    "device_id",
+    "gain_setting",
+    "transmit_duration_us",
+    "sample_period_25ns",
+    "frequency_khz",
+    "num_samples",
+    "range_m",
+    "start_angle_grad",
+    "stop_angle_grad",
+    "num_steps",
+    "delay_ms",
+];
 
 const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "setup"];
 const GP_ACTIONS = [
@@ -1141,6 +1158,13 @@ function render(state) {
 
     thrusters.renderMotorsRingsAdvanced(state);
     highlightGpLightChannel();
+    syncSonarRuntimeStatus();
+}
+
+async function refreshSnapshotOnce() {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    snapshot = await r.json();
+    render(snapshot);
 }
 
 async function init() {
@@ -1301,6 +1325,7 @@ uiPrefs.showAlarmBeep ??= true;
 uiPrefs.alarmFilter ??= "all";
 uiPrefs.alarmHistoryCollapsed ??= true;
 uiPrefs.gamepadIndex ??= -1;
+uiPrefs.sonarHeadingLock ??= false;
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.motors ??= true;
@@ -1385,6 +1410,167 @@ async function saveAutologSetupEnabled(publishAck = true) {
     } catch (e) {
         await loadAutologSetupConfig(false);
         if (publishAck) setSetupUiAck(e?.message || "Errore salvataggio autostart.");
+    }
+}
+
+function setSonarSetupAck(text) {
+    const ack = document.getElementById("sonar_cfg_status");
+    if (ack) ack.textContent = text || "-";
+}
+
+function sonarField(id) {
+    return document.getElementById(`sonar_cfg_${id}`);
+}
+
+function writeSonarSetupConfig(cfg) {
+    sonarCfg = cfg || {};
+    const enabled = sonarField("enabled");
+    if (enabled) enabled.checked = !!sonarCfg.enabled;
+    for (const id of SONAR_CFG_FIELDS) {
+        const node = sonarField(id);
+        if (!node) continue;
+        const v = sonarCfg[id];
+        node.value = v == null ? "" : String(v);
+    }
+    const quickRange = document.getElementById("sonar_range_m");
+    if (quickRange && document.activeElement !== quickRange) {
+        const range = Number(sonarCfg.range_m);
+        quickRange.value = Number.isFinite(range) ? String(Math.round(range)) : "";
+    }
+    syncSonarRuntimeStatus();
+}
+
+function numberFieldValue(id, fallback = 0) {
+    const node = sonarField(id);
+    const v = Number(node?.value);
+    return Number.isFinite(v) ? v : fallback;
+}
+
+function readSonarSetupConfig() {
+    const enabled = sonarField("enabled");
+    const current = sonarCfg || {};
+    return {
+        enabled: !!enabled?.checked,
+        host: String(sonarField("host")?.value || current.host || "blueos").trim(),
+        fallback_ip: String(sonarField("fallback_ip")?.value || current.fallback_ip || "192.168.2.2").trim(),
+        port: numberFieldValue("port", current.port ?? 9092),
+        device_id: numberFieldValue("device_id", current.device_id ?? 1),
+        gain_setting: numberFieldValue("gain_setting", current.gain_setting ?? 1),
+        transmit_duration_us: numberFieldValue("transmit_duration_us", current.transmit_duration_us ?? 500),
+        sample_period_25ns: numberFieldValue("sample_period_25ns", current.sample_period_25ns ?? 4000),
+        frequency_khz: numberFieldValue("frequency_khz", current.frequency_khz ?? 750),
+        num_samples: numberFieldValue("num_samples", current.num_samples ?? 800),
+        range_m: numberFieldValue("range_m", current.range_m ?? 60),
+        start_angle_grad: numberFieldValue("start_angle_grad", current.start_angle_grad ?? 0),
+        stop_angle_grad: numberFieldValue("stop_angle_grad", current.stop_angle_grad ?? 399),
+        num_steps: numberFieldValue("num_steps", current.num_steps ?? 1),
+        delay_ms: numberFieldValue("delay_ms", current.delay_ms ?? 0),
+    };
+}
+
+function sonarQuickRangeValue() {
+    const quick = document.getElementById("sonar_range_m");
+    const v = Number(quick?.value);
+    if (Number.isFinite(v)) return v;
+    const cfgRange = Number(sonarCfg?.range_m);
+    return Number.isFinite(cfgRange) ? cfgRange : 60;
+}
+
+async function loadSonarSetupConfig(publishAck = false) {
+    try {
+        const r = await fetch("/api/sonar/ping360/config", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j?.err || j?.detail || (`HTTP ${r.status}`));
+        writeSonarSetupConfig(j || {});
+        if (publishAck) setSonarSetupAck("Ping360 config loaded.");
+    } catch (e) {
+        setSonarSetupAck(e?.message || "Errore lettura Ping360.");
+    }
+}
+
+async function saveSonarSetupConfig() {
+    try {
+        setSonarSetupAck("Saving Ping360 config...");
+        const j = await logs.apiPost("/api/sonar/ping360/config", readSonarSetupConfig());
+        writeSonarSetupConfig(j?.config || readSonarSetupConfig());
+        setSonarSetupAck("Ping360 config saved. Runtime restarted.");
+        await refreshSnapshotOnce().catch(() => { });
+    } catch (e) {
+        setSonarSetupAck(e?.message || "Errore salvataggio Ping360.");
+    }
+}
+
+async function startSonarScan() {
+    try {
+        setSonarSetupAck("Starting Ping360...");
+        const payload = { ...(sonarCfg || readSonarSetupConfig()), range_m: sonarQuickRangeValue() };
+        const j = await logs.apiPost("/api/sonar/ping360/start", payload);
+        writeSonarSetupConfig(j?.config || payload);
+        await refreshSnapshotOnce().catch(() => { });
+    } catch (e) {
+        setSonarSetupAck(e?.message || "Errore start Ping360.");
+    }
+}
+
+async function stopSonarScan() {
+    try {
+        setSonarSetupAck("Stopping Ping360...");
+        const j = await logs.apiPost("/api/sonar/ping360/stop", {});
+        writeSonarSetupConfig(j?.config || { ...(sonarCfg || {}), enabled: false });
+        await refreshSnapshotOnce().catch(() => { });
+    } catch (e) {
+        setSonarSetupAck(e?.message || "Errore stop Ping360.");
+    }
+}
+
+async function applySonarRange() {
+    try {
+        const payload = { ...(sonarCfg || readSonarSetupConfig()), range_m: sonarQuickRangeValue() };
+        const j = await logs.apiPost("/api/sonar/ping360/config", payload);
+        writeSonarSetupConfig(j?.config || payload);
+        setSonarSetupAck("Ping360 range saved. Runtime restarted.");
+        await refreshSnapshotOnce().catch(() => { });
+    } catch (e) {
+        setSonarSetupAck(e?.message || "Errore range Ping360.");
+    }
+}
+
+function syncSonarRuntimeStatus() {
+    const rt = snapshot?.sonar?.ping360 || {};
+    const status = document.getElementById("sonar_status");
+    if (status) {
+        const enabled = rt.enabled !== false;
+        const connected = !!rt.connected;
+        const scanning = !!rt.scanning;
+        status.textContent = !enabled ? "PING360 OFF" : (scanning ? "PING360 SCAN" : (connected ? "PING360 READY" : "PING360 WAIT"));
+        status.style.borderColor = scanning ? "rgba(34, 197, 94, .55)" : (enabled ? "rgba(245, 158, 11, .55)" : "rgba(148, 163, 184, .35)");
+        status.style.background = scanning ? "rgba(34, 197, 94, .18)" : (enabled ? "rgba(245, 158, 11, .12)" : "rgba(148, 163, 184, .12)");
+    }
+
+    const cfgStatus = document.getElementById("sonar_cfg_status");
+    if (cfgStatus && snapshot?.sonar?.ping360) {
+        const err = rt.last_err ? ` err=${rt.last_err}` : "";
+        const rx = Number(rt.rx_total || snapshot?.counters?.ping360_rx || 0);
+        cfgStatus.textContent = `host=${rt.host || "-"}:${rt.port || "-"} rx=${rx} tx=${rt.tx_total || 0}${err}`;
+    }
+
+    const range = Number(rt.range_m ?? sonarCfg?.range_m);
+    const rangeLabel = document.getElementById("sonar_range_label");
+    if (rangeLabel) rangeLabel.textContent = Number.isFinite(range) ? `range: ${range.toFixed(0)} m` : "range: -";
+    const rangeInput = document.getElementById("sonar_range_m");
+    if (rangeInput && document.activeElement !== rangeInput && Number.isFinite(range)) {
+        rangeInput.value = String(Math.round(range));
+    }
+
+    const headingLock = document.getElementById("sonar_heading_lock");
+    if (headingLock) headingLock.checked = !!uiPrefs.sonarHeadingLock;
+    const heading = Number(snapshot?.nav?.heading_deg);
+    if (window.sonarPing360) {
+        window.sonarPing360.setOptions({
+            headingLock: !!uiPrefs.sonarHeadingLock,
+            headingDeg: Number.isFinite(heading) ? heading : 0,
+            rangeM: Number.isFinite(range) ? range : Number(sonarCfg?.range_m || 60),
+        });
     }
 }
 
@@ -1535,6 +1721,11 @@ function renderMainSlot(tab) {
         video.mountActiveVideo();
         return;
     }
+    if (tab === 'sonar') {
+        if (window.sonarPing360) window.sonarPing360.init();
+        syncSonarRuntimeStatus();
+        return;
+    }
     if (tab === 'setup') {
         syncSetupTab();
         return;
@@ -1668,6 +1859,40 @@ function setupSetupTab() {
         });
     }
 
+    const sonarSaveBtn = document.getElementById("sonar_cfg_save");
+    if (sonarSaveBtn) {
+        sonarSaveBtn.onclick = () => saveSonarSetupConfig();
+    }
+
+    const sonarReloadBtn = document.getElementById("sonar_cfg_reload");
+    if (sonarReloadBtn) {
+        sonarReloadBtn.onclick = () => loadSonarSetupConfig(true);
+    }
+
+    const sonarStartBtn = document.getElementById("sonar_start");
+    if (sonarStartBtn) {
+        sonarStartBtn.onclick = () => startSonarScan();
+    }
+
+    const sonarStopBtn = document.getElementById("sonar_stop");
+    if (sonarStopBtn) {
+        sonarStopBtn.onclick = () => stopSonarScan();
+    }
+
+    const sonarRangeBtn = document.getElementById("sonar_range_apply");
+    if (sonarRangeBtn) {
+        sonarRangeBtn.onclick = () => applySonarRange();
+    }
+
+    const sonarHeadingLock = document.getElementById("sonar_heading_lock");
+    if (sonarHeadingLock) {
+        sonarHeadingLock.addEventListener("change", () => {
+            uiPrefs.sonarHeadingLock = !!sonarHeadingLock.checked;
+            saveUiPrefs(uiPrefs);
+            syncSonarRuntimeStatus();
+        });
+    }
+
     const setupAutosaveIds = [
         "setup_default_tab",
         "setup_lights_cfg_collapsed",
@@ -1685,6 +1910,7 @@ function setupSetupTab() {
 
     syncSetupTab();
     loadAutologSetupConfig(false).catch(() => { });
+    loadSonarSetupConfig(false).catch(() => { });
 }
 
 function syncSetupTab() {
@@ -1712,6 +1938,7 @@ function syncSetupTab() {
         if (sel) sel.value = String(gpMap[a.key]);
     }
     syncGamepadDeviceControl();
+    syncSonarRuntimeStatus();
 }
 
 function setMainTab(tab) {
