@@ -1173,9 +1173,65 @@ svg.thRing {
   margin-bottom: 12px;
 }
 
-.videoToolbar input {
-  flex: 1;
-  min-width: 220px;
+.videoPresetSwitch {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.videoSelectBtn {
+  min-width: 108px;
+}
+
+.videoSelectBtn.active {
+  background: rgba(45, 107, 255, .22);
+  border-color: rgba(45, 107, 255, .85);
+  color: #dce7ff;
+}
+
+.videoPresetGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.videoPresetCard {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  padding: 12px;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+.videoPresetCard.active {
+  border-color: rgba(45, 107, 255, .82);
+  box-shadow: 0 0 0 1px rgba(45, 107, 255, .25);
+  background: rgba(45, 107, 255, .08);
+}
+
+.videoPresetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.videoPresetTitle {
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.videoPresetFields {
+  display: grid;
+  gap: 8px;
+}
+
+.videoPresetFields input {
+  width: 100%;
+  min-width: 0;
 }
 
 .videoStage {
@@ -1205,6 +1261,12 @@ svg.thRing {
   object-fit: contain;
   /* o cover */
   display: block;
+}
+
+@media (max-width: 1100px) {
+  .videoPresetGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ===== Setup tab ===== */
@@ -1240,6 +1302,10 @@ svg.thRing {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.setupCardWide {
+  grid-column: 1 / -1;
 }
 
 .setupTitle {

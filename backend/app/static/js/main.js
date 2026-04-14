@@ -2,7 +2,7 @@ import * as utils from './utils.js?v=16';
 import { scadaSvg } from './power.js?v=16';
 import * as lights from './lights.js';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js?v=17';
+import * as video from './video.js?v=18';
 import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
@@ -51,6 +51,9 @@ const GP_ACTIONS = [
     { key: "vmot_disable", label: "VMOT DISABLE immediato", def: -1 },
     { key: "add_mark", label: "Aggiungi marker missione", def: 2 },
     { key: "toggle_log", label: "Start/Stop logging", def: 3 },
+    { key: "video_stream_1", label: "Video stream 1", def: 4 },
+    { key: "video_stream_2", label: "Video stream 2", def: 5 },
+    { key: "video_stream_3", label: "Video stream 3", def: 6 },
     { key: "tab_cycle", label: "Ciclo tab", def: 9 },
 ];
 const GP_DEFAULT_MAP = Object.fromEntries(GP_ACTIONS.map((x) => [x.key, x.def]));
@@ -1529,7 +1532,7 @@ function renderMainSlot(tab) {
         return;
     }
     if (tab === 'video') {
-        video.mountVideo(video.videoState.kind, video.videoState.url);
+        video.mountActiveVideo();
         return;
     }
     if (tab === 'setup') {
@@ -1936,6 +1939,9 @@ function setupJoystickControls() {
             updateGpVmotHold(buttons);
             if (gamepadEdge(buttons, gpMap.add_mark)) gpAddMarkerEvent();
             if (gamepadEdge(buttons, gpMap.toggle_log)) gpToggleLogging();
+            if (gamepadEdge(buttons, gpMap.video_stream_1)) video.selectVideoStream(0);
+            if (gamepadEdge(buttons, gpMap.video_stream_2)) video.selectVideoStream(1);
+            if (gamepadEdge(buttons, gpMap.video_stream_3)) video.selectVideoStream(2);
             if (gamepadEdge(buttons, gpMap.tab_cycle)) cycleMainTab(1);
 
             gpPrevButtons = buttons;

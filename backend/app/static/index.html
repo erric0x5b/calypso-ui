@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=15">
+  <link rel="stylesheet" href="app.css?v=16">
 </head>
 
 <body>
@@ -143,16 +143,11 @@
           </div>
           <div class="cardBody">
             <div class="videoToolbar">
-              <select id="video_source">
-                <option value="auto">AUTO</option>
-                <option value="rtsp">RTSP (proxy)</option>
-                <option value="mjpeg">MJPEG</option>
-                <option value="video">VIDEO (mp4/webrtc/hls*)</option>
-              </select>
-
-              <input id="video_url" type="text" placeholder="URL stream (es: rtsp://..., /static/demo.mp4, http://...)" />
-
-              <button id="video_apply">APPLY</button>
+              <div class="videoPresetSwitch" role="group" aria-label="Selezione stream video">
+                <button id="video_select_1" class="videoSelectBtn" type="button">STREAM 1</button>
+                <button id="video_select_2" class="videoSelectBtn" type="button">STREAM 2</button>
+                <button id="video_select_3" class="videoSelectBtn" type="button">STREAM 3</button>
+              </div>
               <button id="video_stop">STOP</button>
             </div>
 
@@ -161,7 +156,7 @@
             </div>
 
             <div class="mono" style="margin-top:10px;opacity:.75">
-              *RTSP viene convertito dal backend in MJPEG. Nel container deve essere presente `ffmpeg`.
+              *RTSP viene convertito dal backend in MJPEG. Nel container deve essere presente `ffmpeg`. Configura gli stream nella scheda `SETUP`; `STOP` ferma solo la visualizzazione corrente.
             </div>
           </div>
         </div>
@@ -238,6 +233,60 @@
                 <label class="setupCheck"><input type="checkbox" id="setup_alarm_beep_enabled"> Alarm beep enabled</label>
                 <div class="setupActions">
                   <button id="setup_alarm_beep_test">TEST BEEP</button>
+                </div>
+              </section>
+
+              <section class="setupCard setupCardWide">
+                <h3 class="setupTitle">Video Streams</h3>
+                <div class="mono">Configura fino a 3 stream. La selezione attiva resta disponibile nella scheda VIDEO e dal joystick.</div>
+                <div class="videoPresetGrid">
+                  <div id="video_preset_card_1" class="videoPresetCard">
+                    <div class="videoPresetHead">
+                      <div class="videoPresetTitle">Stream 1</div>
+                      <span class="pill mono" id="video_stream_state_1">AUTO</span>
+                    </div>
+                    <div class="videoPresetFields">
+                      <select id="video_source_1">
+                        <option value="auto">AUTO</option>
+                        <option value="rtsp">RTSP (proxy)</option>
+                        <option value="mjpeg">MJPEG</option>
+                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                      </select>
+                      <input id="video_url_1" type="text" placeholder="URL stream 1 (es: rtsp://..., /static/demo.mp4, http://...)" />
+                    </div>
+                  </div>
+
+                  <div id="video_preset_card_2" class="videoPresetCard">
+                    <div class="videoPresetHead">
+                      <div class="videoPresetTitle">Stream 2</div>
+                      <span class="pill mono" id="video_stream_state_2">AUTO</span>
+                    </div>
+                    <div class="videoPresetFields">
+                      <select id="video_source_2">
+                        <option value="auto">AUTO</option>
+                        <option value="rtsp">RTSP (proxy)</option>
+                        <option value="mjpeg">MJPEG</option>
+                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                      </select>
+                      <input id="video_url_2" type="text" placeholder="URL stream 2 (es: rtsp://..., /static/demo.mp4, http://...)" />
+                    </div>
+                  </div>
+
+                  <div id="video_preset_card_3" class="videoPresetCard">
+                    <div class="videoPresetHead">
+                      <div class="videoPresetTitle">Stream 3</div>
+                      <span class="pill mono" id="video_stream_state_3">AUTO</span>
+                    </div>
+                    <div class="videoPresetFields">
+                      <select id="video_source_3">
+                        <option value="auto">AUTO</option>
+                        <option value="rtsp">RTSP (proxy)</option>
+                        <option value="mjpeg">MJPEG</option>
+                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                      </select>
+                      <input id="video_url_3" type="text" placeholder="URL stream 3 (es: rtsp://..., /static/demo.mp4, http://...)" />
+                    </div>
+                  </div>
                 </div>
               </section>
             </div>
@@ -408,7 +457,7 @@
   }
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
-  <script type="module" src="js/main.js?v=17"></script>
+  <script type="module" src="js/main.js?v=18"></script>
   <script src="sonar_ping360.js?v=1" defer></script>
 </body>
 
