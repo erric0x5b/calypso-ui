@@ -15,6 +15,11 @@ Questa e la specifica da usare per allineare il firmware fari.
 ## Trasporto e frame
 
 - Trasporto: UDP (lato SFC/Engine) + RS485 (lato bus luci).
+- Destinazioni UDP runtime:
+  - master: `CALYPSO_UDP_TX_HOST` + `CALYPSO_UDP_TX_PORT`
+  - slave opzionale: `CALYPSO_UDP_TX_SLAVE_HOST` + `CALYPSO_UDP_TX_PORT`
+  - override lista luci: `CALYPSO_LIGHTS_UDP_TX_HOSTS` con host separati da virgola.
+  - default compose RPi: `192.168.2.3:14591` e `192.168.2.4:14591`.
 - Formato frame (NMEA v2):
   - `$SRC,DST,MSG,2,SEQ,TS_MS,<key,value,...>*CRC\r\n`
 - `CRC`: XOR a 8 bit di tutti i caratteri tra `$` e `*`, codificato hex uppercase a 2 cifre.

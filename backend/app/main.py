@@ -60,7 +60,9 @@ from backend.app.state import (
 HTTP_PORT = int(os.getenv("CALYPSO_HTTP_PORT", "8080"))  # (non usato da uvicorn in container)
 UDP_RX_PORT = int(os.getenv("CALYPSO_UDP_RX_PORT", "14590"))
 UDP_TX_PORT = int(os.getenv("CALYPSO_UDP_TX_PORT", "14591"))
-UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.10")
+UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.3").strip()
+UDP_TX_SLAVE_HOST = os.getenv("CALYPSO_UDP_TX_SLAVE_HOST", "192.168.2.4").strip()
+LIGHTS_UDP_TX_HOSTS_RAW = os.getenv("CALYPSO_LIGHTS_UDP_TX_HOSTS", "").strip()
 CONTROLLER_UDP_PORT = int(os.getenv("CALYPSO_CONTROLLER_UDP_PORT", "5010"))
 CONTROLLER_OFFLINE_MS = int(os.getenv("CALYPSO_CONTROLLER_OFFLINE_MS", "1000"))
 
@@ -447,6 +449,38 @@ def parse_nmea_line(line: str):
 load_lights_cfg = lights_cfg.load_lights_cfg
 save_lights_cfg = lights_cfg.save_lights_cfg
 
+
+def parse_udp_hosts(raw: str) -> list[str]:
+    hosts: list[str] = []
+    for item in raw.replace(";", ",").split(","):
+        host = item.strip()
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def lights_udp_tx_hosts() -> list[str]:
+    if LIGHTS_UDP_TX_HOSTS_RAW:
+        hosts = parse_udp_hosts(LIGHTS_UDP_TX_HOSTS_RAW)
+    else:
+        hosts = parse_udp_hosts(",".join([UDP_TX_HOST, UDP_TX_SLAVE_HOST]))
+    return hosts or [UDP_TX_HOST]
+
+
+def send_udp_line(line: str, targets: list[tuple[str, int]]) -> list[str]:
+    sent: list[str] = []
+    errors: list[str] = []
+    data = line.encode("ascii")
+    for host, port in targets:
+        try:
+            udp_tx_sock.sendto(data, (host, port))
+            sent.append(f"{host}:{port}")
+        except Exception as e:
+            errors.append(f"{host}:{port} {e}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return sent
+
 # Ping360 runtime
 ping360_stop: Optional[asyncio.Event] = None
 ping360_task_handle: Optional[asyncio.Task] = None
@@ -803,13 +837,14 @@ async def cmd_lights_channel(body: dict = Body(...)):
         "LampIds", lamp_ids_str,
     ]
     line = build_nmea_line(fields)
+    targets = [(host, UDP_TX_PORT) for host in lights_udp_tx_hosts()]
     try:
-        udp_tx_sock.sendto(line.encode("ascii"), (UDP_TX_HOST, UDP_TX_PORT))
+        sent_targets = send_udp_line(line, targets)
     except Exception as e:
         return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
 
     # Firmware light bridge forwards this command to RS485 without generating ACK.
-    return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids, "await_ack": False}
+    return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids, "await_ack": False, "udp_targets": sent_targets}
 
 
 @app.post("/api/cmd/vmot_master")

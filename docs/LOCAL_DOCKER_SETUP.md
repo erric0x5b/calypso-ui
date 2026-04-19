@@ -47,6 +47,7 @@ Variabili principali supportate:
 
 - `HOST_HTTP_PORT` (default `8090`)
 - `CALYPSO_UDP_TX_HOST` (default `udp-sim`)
+- `CALYPSO_UDP_TX_SLAVE_HOST` (default vuoto in locale; default RPi `192.168.2.4`)
 - `MAVLINK_ENABLED` (default `0` in locale)
 - `CALYPSO_LOGS_PATH` (default `./data/logs`)
 
