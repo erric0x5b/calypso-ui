@@ -2,16 +2,31 @@ import os
 import socket
 import time
 import threading
+import json
+import math
 
 CMD_LISTEN_PORT = int(os.getenv("SIM_CMD_LISTEN_PORT", "14591"))
 SIM_TARGET_HOST = (os.getenv("SIM_TARGET_HOST", "calypso-ui-backend") or "calypso-ui-backend").strip()
 SIM_TARGET_PORT = int(os.getenv("SIM_TARGET_PORT", "14590"))
+SIM_CONTROLLER_TARGET_PORT = int(os.getenv("SIM_CONTROLLER_TARGET_PORT", "5010"))
 ENV_HZ = float(os.getenv("SIM_RATE_ENV_HZ", "10"))
 ESC_HZ = float(os.getenv("SIM_RATE_ESC_HZ", "10"))
 HB_HZ  = float(os.getenv("SIM_RATE_HB_HZ", "1"))
 ALM_HZ = float(os.getenv("SIM_RATE_ALM_HZ", "2"))
+CONTROLLER_HZ = float(os.getenv("SIM_RATE_CONTROLLER_HZ", "25"))
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+def send_json(obj: dict, port: int):
+    data = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+    while True:
+        try:
+            sock.sendto(data, (SIM_TARGET_HOST, port))
+            return
+        except socket.gaierror:
+            time.sleep(0.2)
+        except Exception:
+            time.sleep(0.2)
 
 def send_line(payload: str):
     line = f"${payload}*{cks(payload)}\r\n"
@@ -53,6 +68,8 @@ def ts_ms():
 next_env = time.time()
 next_esc = time.time()
 next_hb  = time.time()
+next_controller = time.time()
+seq_controller = 0
 
 ALARM_SCENES = [
     {"src": "BAT1", "id": 300, "sev": 2, "latched": 0, "text": "ALM_VBUS_LOW: VBUS 47.8V"},
@@ -195,6 +212,63 @@ while True:
     if now >= next_alm:
         update_alarm_stream()
         next_alm = now + (1.0 / ALM_HZ)
+
+    if now >= next_controller:
+        seq_controller = (seq_controller + 1) & 0xFFFFFFFF
+        t = time.time() - t0
+        lx = int(math.sin(t * 0.9) * 550)
+        ly = int(math.cos(t * 0.5) * 420)
+        rx = int(math.sin(t * 0.35) * 300)
+        ry = int(math.cos(t * 0.7) * 650)
+        b2 = (int(t) % 8) == 3
+        controller = {
+            "seq": seq_controller,
+            "ts_ms": ts_ms(),
+            "controller_online": True,
+            "active_link": "usb",
+            "usb_available": True,
+            "bt_available": True,
+            "source_quality": 100,
+            "profile": "pilot_default",
+            "mode": "pilot",
+            "raw": {
+                "lx": lx,
+                "ly": ly,
+                "rx": rx,
+                "ry": ry,
+                "lt": 0,
+                "rt": 0,
+            },
+            "buttons": {
+                "b1": False,
+                "b2": b2,
+                "b3": False,
+                "b4": False,
+                "b5": False,
+                "b6": False,
+            },
+            "switches": {
+                "sw1": 1,
+                "sw2": 0,
+            },
+            "mapped": {
+                "surge": round(ly / 1000.0, 2),
+                "sway": round(rx / 1000.0, 2),
+                "heave": round(ry / 1000.0, 2),
+                "yaw": round(lx / 1000.0, 2),
+                "lights_up": False,
+                "lights_down": b2,
+                "camera_rec": False,
+            },
+            "events": [{"type": "button_down", "id": "b2"}] if b2 else [],
+            "health": {
+                "link_stale": False,
+                "vjoy_ok": True,
+                "safe_output": False,
+            },
+        }
+        send_json(controller, SIM_CONTROLLER_TARGET_PORT)
+        next_controller = now + (1.0 / CONTROLLER_HZ)
 
     time.sleep(0.001)
 

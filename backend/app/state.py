@@ -56,6 +56,30 @@ state.setdefault("mav", {
     "last_heartbeat_ms": 0,
 })
 state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
+state.setdefault("controller", {
+    "online": False,
+    "last_update_ms": 0,
+    "last_seen_monotonic_ms": 0,
+    "seq": None,
+    "ts_ms": None,
+    "controller_online": False,
+    "active_link": "no_link",
+    "usb_available": False,
+    "bt_available": False,
+    "source_quality": None,
+    "profile": None,
+    "mode": None,
+    "raw": {},
+    "buttons": {},
+    "switches": {},
+    "mapped": {},
+    "events": [],
+    "health": {
+        "link_stale": True,
+        "vjoy_ok": False,
+        "safe_output": True,
+    },
+})
 
 # LiFePO4 OCV->SOC approximation table (single cell, at-rest).
 # NOTE: under load and temperature variations this estimate can drift significantly.

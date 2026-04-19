@@ -1461,6 +1461,92 @@ svg.thRing {
   display: none;
 }
 
+#controller_link.ok {
+  border-color: rgba(34, 197, 94, .45);
+  background: rgba(34, 197, 94, .14);
+  color: #bff7d3;
+}
+
+#controller_link.warn {
+  border-color: rgba(245, 158, 11, .50);
+  background: rgba(245, 158, 11, .16);
+  color: #ffe7b8;
+}
+
+#controller_link.bad {
+  border-color: rgba(239, 68, 68, .55);
+  background: rgba(239, 68, 68, .16);
+  color: #ffd1d1;
+}
+
+.controllerStatus {
+  display: grid;
+  gap: 10px;
+}
+
+.controllerMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.controllerMeta .badge {
+  justify-content: space-between;
+  border-radius: 8px;
+}
+
+.controllerAxes {
+  display: grid;
+  gap: 7px;
+}
+
+.controllerAxisRow {
+  display: grid;
+  grid-template-columns: 54px 1fr 48px;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.controllerAxisBar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  overflow: hidden;
+  position: relative;
+}
+
+.controllerAxisBar::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, .28);
+}
+
+.controllerAxisFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(45, 107, 255, .78);
+}
+
+.controllerMapped {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.controllerMapped .badge {
+  border-radius: 8px;
+  min-width: 0;
+  justify-content: space-between;
+}
+
 .helpOverlay {
   position: fixed;
   inset: 0;

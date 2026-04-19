@@ -829,6 +829,91 @@ function escapeHtml(s) {
         .replaceAll("'", "&#39;");
 }
 
+function clamp(n, min, max) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return min;
+    return Math.max(min, Math.min(max, v));
+}
+
+function controllerBool(v) {
+    return v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+}
+
+function fmtControllerValue(v, digits = 2) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "-";
+    return Math.abs(n) >= 10 ? String(Math.round(n)) : n.toFixed(digits);
+}
+
+function axisBarHtml(label, value, scale = 1000) {
+    const n = Number(value);
+    const norm = Number.isFinite(n) ? clamp(n / scale, -1, 1) : 0;
+    const width = Math.abs(norm) * 50;
+    const left = norm >= 0 ? 50 : 50 - width;
+    return `
+      <div class="controllerAxisRow">
+        <span>${escapeHtml(label)}</span>
+        <span class="controllerAxisBar"><span class="controllerAxisFill" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;"></span></span>
+        <span>${escapeHtml(fmtControllerValue(value, 0))}</span>
+      </div>
+    `;
+}
+
+function renderControllerStatus(state) {
+    const ctrl = state?.controller || {};
+    const udp = state?.controller_udp || {};
+    const linkPill = document.getElementById("controller_link");
+    const online = controllerBool(ctrl.online) && !controllerBool(ctrl?.health?.link_stale);
+    const activeLink = String(ctrl.active_link || "no_link").toUpperCase();
+
+    if (linkPill) {
+        linkPill.classList.remove("ok", "warn", "bad");
+        linkPill.classList.add(online ? "ok" : (udp.listener_ok ? "warn" : "bad"));
+        linkPill.textContent = online ? activeLink : (udp.listener_ok ? "WAIT" : "UDP OFF");
+    }
+
+    const raw = ctrl.raw || {};
+    const mapped = ctrl.mapped || {};
+    const health = ctrl.health || {};
+    const mappedKeys = ["surge", "sway", "heave", "yaw", "lights_up", "lights_down", "camera_rec"];
+    const mappedHtml = mappedKeys
+        .filter((k) => Object.prototype.hasOwnProperty.call(mapped, k))
+        .map((k) => {
+            const v = mapped[k];
+            const cls = controllerBool(v) ? "ok" : "muted";
+            return `<span class="badge ${cls}"><span>${escapeHtml(k)}</span><span>${escapeHtml(typeof v === "boolean" ? (v ? "ON" : "OFF") : fmtControllerValue(v))}</span></span>`;
+        })
+        .join("");
+
+    const events = Array.isArray(ctrl.events) ? ctrl.events : [];
+    const lastEvents = events.slice(-3).map((ev) => `${ev?.type || "event"}:${ev?.id || "-"}`).join("  ");
+    const ageMs = Number(ctrl.last_update_ms) > 0 ? Math.max(0, Date.now() - Number(ctrl.last_update_ms)) : null;
+
+    utils.setHTML("controller_status", `
+      <div class="controllerMeta">
+        <span class="badge ${online ? "ok" : "bad"}"><span>online</span><span>${online ? "YES" : "NO"}</span></span>
+        <span class="badge"><span>port</span><span>${escapeHtml(udp.port ?? "-")}</span></span>
+        <span class="badge"><span>seq</span><span>${escapeHtml(ctrl.seq ?? "-")}</span></span>
+        <span class="badge"><span>age</span><span>${ageMs == null ? "-" : `${Math.round(ageMs)} ms`}</span></span>
+        <span class="badge ${controllerBool(ctrl.usb_available) ? "ok" : "muted"}"><span>USB</span><span>${controllerBool(ctrl.usb_available) ? "READY" : "-"}</span></span>
+        <span class="badge ${controllerBool(ctrl.bt_available) ? "ok" : "muted"}"><span>BT</span><span>${controllerBool(ctrl.bt_available) ? "READY" : "-"}</span></span>
+      </div>
+      <div class="controllerAxes">
+        ${axisBarHtml("lx", raw.lx)}
+        ${axisBarHtml("ly", raw.ly)}
+        ${axisBarHtml("rx", raw.rx)}
+        ${axisBarHtml("ry", raw.ry)}
+      </div>
+      <div class="controllerMapped">
+        ${mappedHtml || `<span class="badge muted">No mapped controls</span>`}
+      </div>
+      <div class="mono">profile=${escapeHtml(ctrl.profile || "-")} mode=${escapeHtml(ctrl.mode || "-")}
+quality=${escapeHtml(ctrl.source_quality ?? "-")} stale=${controllerBool(health.link_stale) ? "true" : "false"} safe=${controllerBool(health.safe_output) ? "true" : "false"} vjoy=${controllerBool(health.vjoy_ok) ? "true" : "false"}
+rx_valid=${escapeHtml(udp.rx_valid ?? 0)} rx_invalid=${escapeHtml(udp.rx_invalid ?? 0)} from=${escapeHtml(udp.last_from || "-")}
+events=${escapeHtml(lastEvents || "-")}</div>
+    `);
+}
+
 function sidToDate(sid) {
     const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(String(sid || ""));
     if (!m) return null;
@@ -1159,6 +1244,7 @@ function render(state) {
     thrusters.renderMotorsRingsAdvanced(state);
     highlightGpLightChannel();
     syncSonarRuntimeStatus();
+    renderControllerStatus(state);
 }
 
 async function refreshSnapshotOnce() {
@@ -1274,6 +1360,14 @@ async function init() {
                 return;
             }
 
+            if (msg.type === "controller") {
+                snapshot = snapshot || {};
+                if (msg.controller) snapshot.controller = msg.controller;
+                if (msg.udp) snapshot.controller_udp = msg.udp;
+                requestRender();
+                return;
+            }
+
             if (msg.type === "udp" || msg.type === "alarm") {
                 refreshState(msg.raw).then(() => requestRender());
                 }
@@ -1305,6 +1399,7 @@ function requestRender() {
 const WIDGETS = [
     { id: "alarms", title: "Allarmi" },
     { id: "lights", title: "Luci" },
+    { id: "controller", title: "Controller" },
     { id: "motors", title: "Motori" },
     { id: "missionlog", title: "Mission Log" },
 ];
@@ -1319,6 +1414,9 @@ function saveUiPrefs(p) {
 let uiPrefs = loadUiPrefs();
 uiPrefs.visible ??= Object.fromEntries(WIDGETS.map(w => [w.id, true]));
 uiPrefs.collapsed ??= {};
+for (const w of WIDGETS) {
+    if (uiPrefs.visible[w.id] == null) uiPrefs.visible[w.id] = true;
+}
 uiPrefs.mainTab ??= "vehicle";
 uiPrefs.showLightsAck ??= true;
 uiPrefs.showAlarmBeep ??= true;
@@ -1328,6 +1426,7 @@ uiPrefs.gamepadIndex ??= -1;
 uiPrefs.sonarHeadingLock ??= false;
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.lights ??= false;
+uiPrefs.collapsed.controller ??= false;
 uiPrefs.collapsed.motors ??= true;
 uiPrefs.collapsed.missionlog ??= true;
 uiPrefs.lightsCfgCollapsed ??= true;
@@ -1339,6 +1438,7 @@ if (uiPrefs.mainTabPresetVersion !== 3) {
 if (uiPrefs.layoutPresetVersion !== 1) {
     uiPrefs.collapsed.alarms = true;
     uiPrefs.collapsed.lights = false;
+    uiPrefs.collapsed.controller = false;
     uiPrefs.collapsed.motors = true;
     uiPrefs.collapsed.missionlog = true;
     uiPrefs.lightsCfgCollapsed = true;
@@ -1787,6 +1887,7 @@ function setupSetupTab() {
             uiPrefs.visible = Object.fromEntries(WIDGETS.map((w) => [w.id, true]));
             uiPrefs.collapsed.alarms = true;
             uiPrefs.collapsed.lights = false;
+            uiPrefs.collapsed.controller = false;
             uiPrefs.collapsed.motors = true;
             uiPrefs.collapsed.missionlog = true;
             uiPrefs.lightsCfgCollapsed = true;

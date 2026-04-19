@@ -1,6 +1,5 @@
 import asyncio
 import csv
-from curses.ascii import alt
 import io
 import logging as py_logging
 import json
@@ -32,6 +31,11 @@ from backend.app.sonar_ping360 import (
     save_cfg as ping360_save_cfg,
     ping360_task,
 )
+from backend.app.controller_broker import (
+    ControllerBrokerStats,
+    mark_controller_stale,
+    start_controller_broker_listener,
+)
 from backend.app.udp_rx import UdpRxStats, start_udp_listener
 
 # state moved to backend.app.state
@@ -57,6 +61,8 @@ HTTP_PORT = int(os.getenv("CALYPSO_HTTP_PORT", "8080"))  # (non usato da uvicorn
 UDP_RX_PORT = int(os.getenv("CALYPSO_UDP_RX_PORT", "14590"))
 UDP_TX_PORT = int(os.getenv("CALYPSO_UDP_TX_PORT", "14591"))
 UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.10")
+CONTROLLER_UDP_PORT = int(os.getenv("CALYPSO_CONTROLLER_UDP_PORT", "5010"))
+CONTROLLER_OFFLINE_MS = int(os.getenv("CALYPSO_CONTROLLER_OFFLINE_MS", "1000"))
 
 LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
 OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
@@ -98,6 +104,7 @@ py_logging.basicConfig(level=py_logging.INFO)
 
 app = FastAPI(title="calypso-ui backend")
 udp_stats = UdpRxStats()
+controller_udp_stats = ControllerBrokerStats()
 
 # Serve UI under /ui (safe with /api routes)
 app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
@@ -500,6 +507,25 @@ def handle_udp_datagram(data: bytes, addr):
     }))
 
 
+def handle_controller_payload(controller_state: dict, addr):
+    state["controller"] = controller_state
+    state["counters"]["controller_udp_rx"] = int(state["counters"].get("controller_udp_rx", 0)) + 1
+
+    asyncio.create_task(ws_broadcast({
+        "type": "controller",
+        "controller": controller_state,
+        "udp": {
+            "listener_ok": controller_udp_stats.listener_ok,
+            "port": controller_udp_stats.listener_port,
+            "rx_total": controller_udp_stats.rx_total,
+            "rx_valid": controller_udp_stats.rx_valid,
+            "rx_invalid": controller_udp_stats.rx_invalid,
+            "last_from": controller_udp_stats.rx_last_from,
+            "last_error": controller_udp_stats.rx_last_error,
+        },
+    }))
+
+
 async def offline_watchdog():
     while True:
         await asyncio.sleep(1.0)
@@ -577,6 +603,36 @@ async def autolog_watchdog():
                 "text": f"Auto-start logging depth<{AUTOLOG_DEPTH_M:.2f}m",
             })
 
+
+async def controller_broker_watchdog():
+    while True:
+        await asyncio.sleep(0.25)
+        controller = state.get("controller") or {}
+        last_seen = int(controller.get("last_seen_monotonic_ms") or 0)
+        if last_seen <= 0:
+            continue
+
+        now_monotonic_ms = int(time.monotonic() * 1000)
+        if now_monotonic_ms - last_seen <= CONTROLLER_OFFLINE_MS:
+            continue
+
+        now_wall_ms = int(time.time() * 1000)
+        if mark_controller_stale(controller, now_wall_ms):
+            state["controller"] = controller
+            await ws_broadcast({
+                "type": "controller",
+                "controller": controller,
+                "udp": {
+                    "listener_ok": controller_udp_stats.listener_ok,
+                    "port": controller_udp_stats.listener_port,
+                    "rx_total": controller_udp_stats.rx_total,
+                    "rx_valid": controller_udp_stats.rx_valid,
+                    "rx_invalid": controller_udp_stats.rx_invalid,
+                    "last_from": controller_udp_stats.rx_last_from,
+                    "last_error": "controller UDP timeout",
+                },
+            })
+
 # ----------------------------
 # Startup (single)
 # ----------------------------
@@ -586,10 +642,12 @@ async def startup():
 
     # UDP listener
     await start_udp_listener(udp_stats, on_datagram=handle_udp_datagram)
+    await start_controller_broker_listener(controller_udp_stats, on_payload=handle_controller_payload)
 
     # background tasks
     asyncio.create_task(offline_watchdog())
     asyncio.create_task(autolog_watchdog())
+    asyncio.create_task(controller_broker_watchdog())
 
     # Ping360 task
     start_ping360_runtime()
@@ -638,6 +696,21 @@ def api_state():
             "last_ck_ok": udp_stats.rx_last_ck_ok,
             "last_prefix": udp_stats.rx_last_prefix,
         },
+        "controller_udp": {
+            "listener_ok": controller_udp_stats.listener_ok,
+            "bind": controller_udp_stats.listener_bind,
+            "port": controller_udp_stats.listener_port,
+            "error": controller_udp_stats.listener_error,
+            "rx_total": controller_udp_stats.rx_total,
+            "rx_valid": controller_udp_stats.rx_valid,
+            "rx_invalid": controller_udp_stats.rx_invalid,
+            "last_ts_ms": controller_udp_stats.rx_last_ts_ms,
+            "last_from": controller_udp_stats.rx_last_from,
+            "last_len": controller_udp_stats.rx_last_len,
+            "last_error": controller_udp_stats.rx_last_error,
+            "last_seq": controller_udp_stats.rx_last_seq,
+            "last_active_link": controller_udp_stats.rx_last_active_link,
+        },
     }
 
 @app.get("/api/health")
@@ -660,7 +733,9 @@ def api_health():
     return {
         "ok": True,
         "udp_rx_port": UDP_RX_PORT,
+        "controller_udp_port": CONTROLLER_UDP_PORT,
         "offline_ms": OFFLINE_MS,
+        "controller_offline_ms": CONTROLLER_OFFLINE_MS,
         "counters": state["counters"],
         "last_update_ms": state["last_update_ms"],
         "nodes": {k: {"online": v.get("online"), "last_hb_ms": v.get("last_hb_ms")} for k, v in state["nodes"].items()},
@@ -679,6 +754,18 @@ def api_health():
             "last_dst": udp_stats.rx_last_dst,
             "last_ck_ok": udp_stats.rx_last_ck_ok,
             "last_prefix": udp_stats.rx_last_prefix,
+        },
+        "controller": state.get("controller"),
+        "controller_udp": {
+            "listener_ok": controller_udp_stats.listener_ok,
+            "bind": controller_udp_stats.listener_bind,
+            "port": controller_udp_stats.listener_port,
+            "error": controller_udp_stats.listener_error,
+            "rx_total": controller_udp_stats.rx_total,
+            "rx_valid": controller_udp_stats.rx_valid,
+            "rx_invalid": controller_udp_stats.rx_invalid,
+            "last_from": controller_udp_stats.rx_last_from,
+            "last_error": controller_udp_stats.rx_last_error,
         },
         "autolog": state.get("autolog"),
     }

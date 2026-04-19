@@ -21,14 +21,17 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/data
 
-EXPOSE 80
+EXPOSE 80 14590/udp 14591/udp 5010/udp
 
 # --- BlueOS labels (allineate alla doc) ---
 LABEL version="0.4.5"
 
 LABEL permissions='{\
   "ExposedPorts": {\
-    "80/tcp": {}\
+    "80/tcp": {},\
+    "14590/udp": {},\
+    "14591/udp": {},\
+    "5010/udp": {}\
   },\
   "HostConfig": {\
     "ExtraHosts": ["host.docker.internal:host-gateway"],\
@@ -36,6 +39,21 @@ LABEL permissions='{\
       "80/tcp": [\
         {\
           "HostPort": ""\
+        }\
+      ],\
+      "14590/udp": [\
+        {\
+          "HostPort": "14590"\
+        }\
+      ],\
+      "14591/udp": [\
+        {\
+          "HostPort": "14591"\
+        }\
+      ],\
+      "5010/udp": [\
+        {\
+          "HostPort": "5010"\
         }\
       ]\
     },\

@@ -7,7 +7,8 @@
     "ExposedPorts": {
       "80/tcp": {},
       "14590/udp": {},
-      "14591/udp": {}
+      "14591/udp": {},
+      "5010/udp": {}
     },
     "HostConfig": {
       "ExtraHosts": [
@@ -27,6 +28,11 @@
         "14591/udp": [
           {
             "HostPort": "14591"
+          }
+        ],
+        "5010/udp": [
+          {
+            "HostPort": "5010"
           }
         ]
       },
