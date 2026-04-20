@@ -1,6 +1,6 @@
 import * as utils from './utils.js?v=16';
 import { scadaSvg } from './power.js?v=17';
-import * as lights from './lights.js';
+import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js?v=18';
 import * as th3 from './three3d.js';
@@ -8,6 +8,7 @@ import * as logs from './logs.js';
 
 let snapshot = null;
 let missionRefreshTimer = null;
+let diagnosticsRefreshTimer = null;
 let missionTabWired = false;
 let missionCurrentSid = null;
 let missionMetaAppliedSid = null;
@@ -56,7 +57,7 @@ const SONAR_CFG_FIELDS = [
     "delay_ms",
 ];
 
-const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "setup"];
+const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "diagnostics", "setup"];
 const GP_ACTIONS = [
     { key: "tab_prev", label: "Tab precedente", def: 14 },
     { key: "tab_next", label: "Tab successivo", def: 15 },
@@ -167,6 +168,49 @@ const ALARM_GUIDE_BY_TEXT = [
         meaning: "Tensione bus fuori range o instabile.",
         action: "Controlla stato POD, carico, cavi potenza e protezioni."
     },
+];
+
+const DIAG_ALARM_CATALOG = [
+    { key: "100", id: 100, label: "ALM_I2C_ERROR", description: "Errore comunicazione I2C locale." },
+    { key: "110", id: 110, label: "ALM_PEER_LOST", description: "Nodo peer non raggiungibile." },
+    { key: "120", id: 120, label: "ALM_CAN_BUS", description: "Anomalia bus CAN." },
+    { key: "200", id: 200, label: "ALM_LEAK", description: "Leak sensor attivo." },
+    { key: "210", id: 210, label: "ALM_OVERTEMP", description: "Temperatura oltre soglia." },
+    { key: "300", id: 300, label: "ALM_VBUS_LOW", description: "VBUS sotto soglia." },
+    { key: "310", id: 310, label: "ALM_DV_HIGH", description: "Delta tensione batterie troppo alto." },
+    { key: "320", id: 320, label: "ALM_PWR_FAULT", description: "Fault logica power switch." },
+    { key: "400", label: "ALM_VESC_LOST", description: "Telemetria persa su ESC specifico.", match: (a) => {
+        const id = Number(a?.id);
+        return (Number.isFinite(id) && id >= 401 && id <= 499) || /VESC_LOST|ESC/i.test(String(a?.text || ""));
+    } },
+    { key: "9001", id: 9001, label: "NODE_OFFLINE", description: "Nodo senza heartbeat oltre soglia." },
+    { key: "BUSCONN", label: "BUSCONN_OFF", description: "POD online ma non collegato al bus.", match: (a) => /BUSCONN|BUS OFF|BUS OFFLINE/i.test(String(a?.text || "")) },
+    { key: "VMOT", label: "VMOT_FAULT", description: "Fault o blocco sequenza VMOT.", match: (a) => /VMOT|MOTOR/i.test(String(a?.text || "")) },
+    { key: "LGT0", label: "LGT_OPENLED", description: "Fault pin OPENLED attivo.", lightFault: "OPENLED" },
+    { key: "LGT1", label: "LGT_OVERTEMP", description: "Temperatura hardware o LED oltre soglia.", lightFault: "OVERTEMP" },
+    { key: "LGT2", label: "LGT_OVERCURR", description: "Corrente bus oltre soglia.", lightFault: "OVERCURR" },
+    { key: "LGT3", label: "LGT_UNDERVOLT", description: "Tensione bus sotto soglia.", lightFault: "UNDERVOLT" },
+    { key: "LGT4", label: "LGT_INA_ALERT", description: "Diagnostica INA238 in fault.", lightFault: "INA_ALERT" },
+];
+
+const LIGHT_FAULT_INFO = [
+    { bit: 0, value: 0x00000001, name: "OPENLED", description: "Fault pin OPENLED attivo." },
+    { bit: 1, value: 0x00000002, name: "OVERTEMP", description: "Temperatura hardware o LED oltre soglia." },
+    { bit: 2, value: 0x00000004, name: "OVERCURR", description: "Corrente bus oltre soglia." },
+    { bit: 3, value: 0x00000008, name: "UNDERVOLT", description: "Tensione bus sotto soglia." },
+    { bit: 4, value: 0x00000010, name: "INA_ALERT", description: "Diagnostica INA238 in fault." },
+];
+
+const INA238_DIAG_BITS = [
+    { bit: 9, value: 0x0200, name: "MATHOF", description: "Overflow matematico: corrente/potenza possono essere non validi." },
+    { bit: 7, value: 0x0080, name: "TMPOL", description: "Temperatura oltre soglia TEMP_LIMIT." },
+    { bit: 6, value: 0x0040, name: "SHNTOL", description: "Tensione shunt sopra soglia SOVL." },
+    { bit: 5, value: 0x0020, name: "SHNTUL", description: "Tensione shunt sotto soglia SUVL." },
+    { bit: 4, value: 0x0010, name: "BUSOL", description: "Tensione bus sopra soglia BOVL." },
+    { bit: 3, value: 0x0008, name: "BUSUL", description: "Tensione bus sotto soglia BUVL." },
+    { bit: 2, value: 0x0004, name: "POL", description: "Potenza oltre soglia PWR_LIMIT." },
+    { bit: 1, value: 0x0002, name: "CNVRF", description: "Conversione completata; informativo.", info: true },
+    { bit: 0, value: 0x0001, name: "MEMSTAT", description: "Memoria trim OK quando vale 1; errore checksum quando vale 0.", inverted: true },
 ];
 
 function normalizeGpMap(raw) {
@@ -729,6 +773,123 @@ function renderHelpPowerReasons(state) {
     `).join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.08);margin:8px 0;\">");
 }
 
+function faultInfoByName(name) {
+    return LIGHT_FAULT_INFO.find((f) => f.name === name) || null;
+}
+
+function renderHelpLightFaults(state) {
+    const box = document.getElementById("help_light_faults");
+    if (!box) return;
+
+    const active = Object.values(state?.lights?.faults_active || {});
+    const history = Array.isArray(state?.lights?.faults_history) ? state.lights.faults_history : [];
+    if (!active.length && !history.length) {
+        box.innerHTML = "Nessun fault fari rilevato.";
+        return;
+    }
+
+    const activeKeys = new Set(active.map((evt) => `${evt.light_id}:${evt.name}`));
+    const latestByKey = new Map();
+    for (const evt of history) {
+        const key = `${evt.light_id}:${evt.name}`;
+        const prev = latestByKey.get(key);
+        if (!prev || Number(evt.ts_ms || 0) >= Number(prev.ts_ms || 0)) latestByKey.set(key, evt);
+    }
+    for (const evt of active) latestByKey.set(`${evt.light_id}:${evt.name}`, evt);
+
+    const rows = Array.from(latestByKey.values())
+        .sort((a, b) => Number(a.light_id || 0) - Number(b.light_id || 0) || String(a.name || "").localeCompare(String(b.name || "")))
+        .map((evt) => {
+            const key = `${evt.light_id}:${evt.name}`;
+            const info = faultInfoByName(String(evt.name || ""));
+            const status = activeKeys.has(key) ? "ATTIVO" : "RIENTRATO";
+            const statusClass = activeKeys.has(key) ? "bad" : "warn";
+            const value = info ? `0x${Number(info.value).toString(16).toUpperCase().padStart(8, "0")}` : `0x${Number(evt.value || 0).toString(16).toUpperCase().padStart(8, "0")}`;
+            return `<div>
+                <span class="diagStatusBadge ${statusClass}">${status}</span>
+                <b>${escapeHtml(evt.src || `LGT${evt.light_id}`)}</b>
+                ${escapeHtml(evt.name || "-")} ${escapeHtml(value)}
+                <span style="opacity:.85;">${escapeHtml(info?.description || "")}</span>
+            </div>`;
+        });
+    box.innerHTML = rows.join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.08);margin:8px 0;\">");
+}
+
+function parseDiagMaskValue(value) {
+    if (value == null || value === "") return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, raw.toLowerCase().startsWith("0x") ? 16 : 10);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractInaMask(row) {
+    if (!row || typeof row !== "object") return null;
+    const keys = [
+        "InaDiag", "INADiag", "INA_DIAG", "InaDiagAlrt", "INADiagAlrt",
+        "DIAG_ALRT", "DiagAlrt", "DiagAlert", "InaFault", "INAFault",
+        "InaFaultCode", "INAFaultCode", "InaAlert", "INAAlert",
+    ];
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(row, key)) {
+            const parsed = parseDiagMaskValue(row[key]);
+            if (parsed != null) return parsed;
+        }
+    }
+    return null;
+}
+
+function decodeInaMask(mask) {
+    const out = [];
+    for (const bit of INA238_DIAG_BITS) {
+        const set = (mask & bit.value) !== 0;
+        const active = bit.inverted ? !set : (set && !bit.info);
+        const info = bit.info && set;
+        if (active || info) out.push({ ...bit, active, info });
+    }
+    return out;
+}
+
+function renderHelpInaFaults(state) {
+    const box = document.getElementById("help_ina_faults");
+    if (!box) return;
+
+    const rows = [];
+    for (const [podName, pod] of Object.entries(state?.pods || {})) {
+        const mask = extractInaMask(pod);
+        if (mask == null) continue;
+        const decoded = decodeInaMask(mask);
+        if (!decoded.length) continue;
+        rows.push({ source: podName, mask, decoded });
+    }
+    for (const [id, light] of Object.entries(state?.lights?.ids || {})) {
+        const mask = extractInaMask(light);
+        if (mask == null) continue;
+        const decoded = decodeInaMask(mask);
+        if (!decoded.length) continue;
+        rows.push({ source: light.src || `LGT${id}`, mask, decoded });
+    }
+
+    if (!rows.length) {
+        box.innerHTML = "Nessun codice INA rilevato in telemetria.";
+        return;
+    }
+
+    box.innerHTML = rows.map((row) => {
+        const flags = row.decoded.map((bit) => {
+            const cls = bit.info ? "warn" : "bad";
+            const label = bit.info ? "INFO" : "FAULT";
+            return `<div>
+                <span class="diagStatusBadge ${cls}">${label}</span>
+                <b>${escapeHtml(bit.name)}</b> bit ${escapeHtml(bit.bit)}
+                <span style="opacity:.85;">${escapeHtml(bit.description)}</span>
+            </div>`;
+        }).join("");
+        return `<div><b>${escapeHtml(row.source)}</b> DIAG_ALRT=0x${Number(row.mask).toString(16).toUpperCase().padStart(4, "0")}</div>${flags}`;
+    }).join("<hr style=\"border:0;border-top:1px solid rgba(255,255,255,.08);margin:8px 0;\">");
+}
+
 function renderHelpAlarmLinks(state) {
     const box = document.getElementById("help_alarm_links");
     if (!box) return;
@@ -927,6 +1088,219 @@ function fmtDuration(totalSec) {
     const m = Math.floor((sec % 3600) / 60);
     const s = Math.floor(sec % 60);
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function fmtAgeMs(ms) {
+    const v = Number(ms);
+    if (!Number.isFinite(v)) return "-";
+    if (v < 1000) return `${Math.round(v)} ms`;
+    if (v < 60000) return `${(v / 1000).toFixed(1)} s`;
+    return fmtDuration(v / 1000);
+}
+
+function diagLedHtml(kind, label) {
+    return `<span class="diagLed ${kind}" aria-label="${escapeHtml(label)}"></span>`;
+}
+
+function diagKindFromRow(row) {
+    if (row?.status_kind) return String(row.status_kind);
+    const ok = !!row?.network_ok && row?.online !== false;
+    return ok ? "ok" : "bad";
+}
+
+function diagStatusText(row) {
+    if (row?.status_text) return String(row.status_text);
+    const kind = diagKindFromRow(row);
+    if (kind === "ok") return "ONLINE";
+    if (kind === "warn") return "WAIT";
+    if (kind === "muted") return "CONFIG";
+    return "OFFLINE";
+}
+
+function parseDeviceUrl(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return { href: "", host: "" };
+    try {
+        const u = new URL(raw, window.location.origin);
+        return { href: raw, host: u.hostname || raw };
+    } catch {
+        return { href: raw, host: raw };
+    }
+}
+
+function cameraDiagnosticRows() {
+    const streams = Array.isArray(video.videoState?.streams) ? video.videoState.streams : [];
+    const activeIndex = Number(video.videoState?.activeIndex ?? 0);
+    const activeStatus = String(document.getElementById("video_status")?.textContent || "");
+    return streams.map((stream, index) => {
+        const label = `CAM_${index + 1}`;
+        const url = String(stream?.url || "").trim();
+        const kind = String(stream?.kind || "auto").toUpperCase();
+        if (!url) {
+            return {
+                node: label,
+                kind: "Camera",
+                role: kind,
+                status_kind: "muted",
+                status_text: "NO URL",
+                detail: "Stream non configurato.",
+            };
+        }
+
+        let statusKind = "warn";
+        let statusText = "CONFIG";
+        if (index === activeIndex && !video.videoState?.isStopped) {
+            if (/OK|LIVE/i.test(activeStatus)) {
+                statusKind = "ok";
+                statusText = "LIVE";
+            } else if (/ERR|ERROR/i.test(activeStatus)) {
+                statusKind = "bad";
+                statusText = "ERROR";
+            } else {
+                statusText = "SELECTED";
+            }
+        }
+        const parsed = parseDeviceUrl(url);
+        return {
+            node: label,
+            kind: "Camera",
+            role: kind,
+            status_kind: statusKind,
+            status_text: statusText,
+            ip: parsed.host,
+            url: parsed.href,
+            detail: url,
+        };
+    });
+}
+
+function diagAlarmActive(a) {
+    return Number(a?.active ?? 1) !== 0;
+}
+
+function diagAlarmMatches(def, alarm) {
+    if (typeof def.match === "function") return !!def.match(alarm);
+    if (def.id != null) return Number(alarm?.id) === Number(def.id);
+    return false;
+}
+
+function latestEvent(events) {
+    return events.reduce((best, evt) => {
+        const bestTs = Number(best?.ts_ms ?? -Infinity);
+        const evtTs = Number(evt?.ts_ms ?? -Infinity);
+        return evtTs >= bestTs ? evt : best;
+    }, null);
+}
+
+function uniqText(items) {
+    return Array.from(new Set(items.filter(Boolean).map((x) => String(x)))).join(", ");
+}
+
+function diagCatalogStatus(def, state, active, history, nowTs) {
+    if (def.lightFault) {
+        const activeValues = Object.values(state?.lights?.faults_active || {});
+        const faultHistory = Array.isArray(state?.lights?.faults_history) ? state.lights.faults_history : [];
+        const activeHits = activeValues.filter((a) => String(a?.name) === def.lightFault && diagAlarmActive(a));
+        const historyHits = faultHistory.filter((a) => String(a?.name) === def.lightFault);
+        const ref = activeHits.length ? latestEvent(activeHits) : latestEvent(historyHits);
+        const sources = activeHits.length
+            ? uniqText(activeHits.map((a) => a.src || `LGT${a.light_id}`))
+            : (ref?.src || "-");
+        return {
+            statusClass: activeHits.length ? "bad" : (ref ? "warn" : "ok"),
+            statusText: activeHits.length ? "ATTIVO" : (ref ? "RIENTRATO" : "OK"),
+            src: sources || "-",
+            age: (ref?.ts_ms != null && Number.isFinite(nowTs))
+                ? fmtAgeMs(Math.max(0, nowTs - Number(ref.ts_ms)))
+                : "-",
+        };
+    }
+
+    const activeHit = active.find((a) => diagAlarmMatches(def, a) && diagAlarmActive(a));
+    const lastHit = [...history].reverse().find((a) => diagAlarmMatches(def, a));
+    const ref = activeHit || lastHit || null;
+    return {
+        statusClass: activeHit ? "bad" : (lastHit ? "warn" : "ok"),
+        statusText: activeHit ? "ATTIVO" : (lastHit ? "RIENTRATO" : "OK"),
+        src: ref?.src || "-",
+        age: (ref?.ts_ms != null && Number.isFinite(nowTs))
+            ? fmtAgeMs(Math.max(0, nowTs - Number(ref.ts_ms)))
+            : "-",
+    };
+}
+
+function renderDiagnosticsDevices(state) {
+    const devices = [
+        ...(Array.isArray(state?.diagnostics?.devices) ? state.diagnostics.devices : []),
+        ...cameraDiagnosticRows(),
+    ];
+    const renderDeviceRow = (d, level = 0) => {
+        const kind = diagKindFromRow(d);
+        const statusText = diagStatusText(d);
+        const led = diagLedHtml(kind, statusText);
+        const ip = String(d.ip || "");
+        const url = String(d.url || "");
+        const link = ip && url
+            ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(ip)}</a>`
+            : ip
+                ? escapeHtml(ip)
+                : url
+                    ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`
+            : "-";
+        const rx = d.rx_ip ? `rx ${d.rx_ip}${d.udp_port == null ? "" : `:${d.udp_port}`}` : "";
+        const port = !d.rx_ip && d.udp_port != null ? `:${escapeHtml(d.udp_port)}` : "";
+        const detail = d.detail ? `<div class="diagSub">${escapeHtml(d.detail)}</div>` : "";
+        const childClass = level > 0 ? " diagChildRow" : "";
+        const nodeClass = level > 0 ? "diagTreeChild" : "";
+        return `<tr class="diagDeviceRow${childClass}">
+            <td>${led}</td>
+            <td><span class="${nodeClass}"><b>${escapeHtml(d.node || "-")}</b></span></td>
+            <td>${escapeHtml(d.kind || "-")}</td>
+            <td>${escapeHtml(d.role || "-")}</td>
+            <td class="mono">${link}${port}${rx ? `<div class="diagSub">${escapeHtml(rx)}</div>` : ""}</td>
+            <td class="mono">${escapeHtml(fmtAgeMs(d.last_rx_age_ms))}</td>
+            <td><span class="diagStatusBadge ${kind}">${escapeHtml(statusText)}</span>${detail}</td>
+        </tr>`;
+    };
+    const rows = devices.flatMap((d) => {
+        const children = Array.isArray(d.children) ? d.children : [];
+        return [renderDeviceRow(d, 0), ...children.map((child) => renderDeviceRow(child, 1))];
+    }).join("");
+
+    utils.setHTML("diag_devices", `<table class="diagTable">
+        <thead><tr><th></th><th>Dispositivo</th><th>Tipo</th><th>Ruolo</th><th>Indirizzo</th><th>Ultimo msg valido</th><th>Stato</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="7">Nessun dispositivo rilevato.</td></tr>`}</tbody>
+    </table>`);
+
+    const online = devices.filter((d) => diagKindFromRow(d) === "ok").length;
+    utils.setText("diag_summary", `${online}/${devices.length} online`);
+}
+
+function renderDiagnosticsAlarms(state) {
+    const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
+    const history = Array.isArray(state?.alarms_history) ? state.alarms_history : [];
+    const nowTs = Number(state?.last_update_ms);
+    const rows = DIAG_ALARM_CATALOG.map((def) => {
+        const status = diagCatalogStatus(def, state, active, history, nowTs);
+        return `<tr>
+            <td><span class="diagStatusBadge ${status.statusClass}">${status.statusText}</span></td>
+            <td class="mono">${escapeHtml(def.key)}</td>
+            <td><b>${escapeHtml(def.label)}</b></td>
+            <td>${escapeHtml(def.description)}</td>
+            <td class="mono">${escapeHtml(status.src)}</td>
+            <td class="mono">${escapeHtml(status.age)}</td>
+        </tr>`;
+    }).join("");
+
+    utils.setHTML("diag_alarms", `<table class="diagTable">
+        <thead><tr><th>Stato</th><th>ID</th><th>Allarme</th><th>Significato</th><th>Ultima sorgente</th><th>Ultimo evento</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`);
+}
+
+function renderDiagnostics(state) {
+    renderDiagnosticsDevices(state);
+    renderDiagnosticsAlarms(state);
 }
 
 function fmtBytes(n) {
@@ -1197,6 +1571,8 @@ function render(state) {
         : `<div class="ok">none</div>`);
     applyAlarmPanelPrefs();
     renderHelpPowerReasons(state);
+    renderHelpLightFaults(state);
+    renderHelpInaFaults(state);
     renderHelpAlarmLinks(state);
     handleAlarmBeep(state);
 
@@ -1245,6 +1621,7 @@ function render(state) {
     highlightGpLightChannel();
     syncSonarRuntimeStatus();
     renderControllerStatus(state);
+    renderDiagnostics(state);
 }
 
 async function refreshSnapshotOnce() {
@@ -1276,6 +1653,9 @@ async function init() {
     const saveBtn = document.getElementById("lgt_cfg_save");
     if (saveBtn)
         saveBtn.onclick = lights.saveLightsCfg;
+    const syncLightsIdsBtn = document.getElementById("lgt_ids_sync");
+    if (syncLightsIdsBtn)
+        syncLightsIdsBtn.onclick = lights.sendLightsIds;
     setupLightsConfigToggle();
     setupJoystickControls();
 
@@ -1284,6 +1664,11 @@ async function init() {
     await logs.refreshLogSessions().catch(() => { });
     await refreshMissionTab().catch(() => { });
     render(snapshot);
+    if (!diagnosticsRefreshTimer) {
+        diagnosticsRefreshTimer = setInterval(() => {
+            if (uiPrefs.mainTab === "diagnostics") refreshSnapshotOnce().catch(() => { });
+        }, 1000);
+    }
 
     const wsProto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
@@ -1798,6 +2183,7 @@ function renderMainSlot(tab) {
     const tw = utils.el('missionTabWrap');
     const vw = utils.el('videoWrap');
     const sw = utils.el('sonarWrap');
+    const dw = utils.el('diagnosticsWrap');
     const suw = utils.el('setupWrap');
     if (mw)
         mw.classList.toggle('hidden', tab !== 'vehicle');
@@ -1807,6 +2193,8 @@ function renderMainSlot(tab) {
         vw.classList.toggle('hidden', tab !== 'video');
     if (sw)
         sw.classList.toggle('hidden', tab !== 'sonar');
+    if (dw)
+        dw.classList.toggle('hidden', tab !== 'diagnostics');
     if (suw)
         suw.classList.toggle('hidden', tab !== 'setup');
     if (tab === 'vehicle') {
@@ -1824,6 +2212,10 @@ function renderMainSlot(tab) {
     if (tab === 'sonar') {
         if (window.sonarPing360) window.sonarPing360.init();
         syncSonarRuntimeStatus();
+        return;
+    }
+    if (tab === 'diagnostics') {
+        if (snapshot) renderDiagnostics(snapshot);
         return;
     }
     if (tab === 'setup') {

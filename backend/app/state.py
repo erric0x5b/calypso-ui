@@ -13,6 +13,7 @@ state: Dict[str, Any] = {
     "nodes": {},
     "pods": {"BAT1": {}, "BAT2": {}},
     "esc": {},
+    "lights": {"ids": {}},
     "alarms_active": [],
     "alarms_history": [],
     "counters": {
@@ -102,6 +103,13 @@ LFP_OCV_SOC_POINTS = [
     (3.55, 100.0),
 ]
 LFP_SERIES_CELLS = 14
+LIGHT_FAULT_BITS = [
+    {"bit": 0, "value": 0x00000001, "name": "OPENLED", "description": "Fault pin OPENLED attivo"},
+    {"bit": 1, "value": 0x00000002, "name": "OVERTEMP", "description": "Temperatura hardware o LED oltre soglia"},
+    {"bit": 2, "value": 0x00000004, "name": "OVERCURR", "description": "Corrente bus oltre soglia"},
+    {"bit": 3, "value": 0x00000008, "name": "UNDERVOLT", "description": "Tensione bus sotto soglia"},
+    {"bit": 4, "value": 0x00000010, "name": "INA_ALERT", "description": "Diagnostica INA238 in fault"},
+]
 
 
 def _interp_soc(points: list[tuple[float, float]], x: float) -> float:
@@ -158,6 +166,56 @@ def apply_soc_estimation(pod: dict, kv: dict) -> None:
     pod["SOC"] = round(est, 1)
     pod["SOC_source"] = "EST_VOLT_14S_LFP"
     pod["SOC_estimated"] = 1
+
+
+def parse_int_mask(value) -> int:
+    if value is None:
+        return 0
+    try:
+        if isinstance(value, str):
+            return int(value.strip(), 0)
+        return int(value)
+    except Exception:
+        return 0
+
+
+def update_light_faults(ts_ms, src: str, light_id: int, fault_mask: int) -> None:
+    lights = state.setdefault("lights", {})
+    active = lights.setdefault("faults_active", {})
+    history = lights.setdefault("faults_history", [])
+    for fault in LIGHT_FAULT_BITS:
+        value = int(fault["value"])
+        key = f"{light_id}:{fault['name']}"
+        is_active = (fault_mask & value) != 0
+        if is_active and key not in active:
+            event = {
+                "ts_ms": ts_ms,
+                "src": src,
+                "light_id": light_id,
+                "bit": fault["bit"],
+                "value": value,
+                "name": fault["name"],
+                "active": 1,
+                "text": f"LGT{light_id}:{fault['name']}",
+            }
+            active[key] = event
+            history.append(event)
+        elif not is_active and key in active:
+            event = {
+                "ts_ms": ts_ms,
+                "src": src,
+                "light_id": light_id,
+                "bit": fault["bit"],
+                "value": value,
+                "name": fault["name"],
+                "active": 0,
+                "text": f"LGT{light_id}:{fault['name']}:CLEARED",
+            }
+            history.append(event)
+            active.pop(key, None)
+
+    if len(history) > 200:
+        del history[:-200]
 
 # simple command id generator
 _cmd_id = 0
@@ -414,6 +472,37 @@ def update_state(parsed: dict):
         err = kv.get("Err")
         text = kv.get("Text")
         record_ack(ts_ms=ts, src=src, cmd_id=cmd_id, ok=ok, err=err, text=text)
+        return
+
+    if msg == "STATUS" and str(kv.get("Type", "")).upper() == "LGT" and str(kv.get("Op", "")).upper() == "STATUS":
+        light_id = kv.get("Id")
+        if light_id is None and isinstance(src, str) and src.upper().startswith("LGT"):
+            raw_id = src[3:]
+            if raw_id.isdigit():
+                light_id = int(raw_id)
+        try:
+            light_id = int(light_id)
+        except Exception:
+            return
+        if light_id < 1:
+            return
+
+        fault_mask = parse_int_mask(kv.get("Fault"))
+        lights = state.setdefault("lights", {}).setdefault("ids", {})
+        entry = dict(kv)
+        entry.update({
+            "lamp_id": light_id,
+            "fault_mask": fault_mask,
+            "src": src,
+            "dst": parsed.get("dst"),
+            "seq": parsed.get("seq"),
+            "ts_ms": ts,
+            "last_rx_ms": ts,
+            "last_seen_monotonic_ms": int(time.monotonic() * 1000),
+        })
+        lights[str(light_id)] = entry
+        state.setdefault("lights", {})["last_update_ms"] = ts
+        update_light_faults(ts, src, light_id, fault_mask)
         return
 
     if msg == "ESC":

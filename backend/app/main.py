@@ -63,8 +63,17 @@ UDP_TX_PORT = int(os.getenv("CALYPSO_UDP_TX_PORT", "14591"))
 UDP_TX_HOST = os.getenv("CALYPSO_UDP_TX_HOST", "192.168.2.3").strip()
 UDP_TX_SLAVE_HOST = os.getenv("CALYPSO_UDP_TX_SLAVE_HOST", "192.168.2.4").strip()
 LIGHTS_UDP_TX_HOSTS_RAW = os.getenv("CALYPSO_LIGHTS_UDP_TX_HOSTS", "").strip()
+DIAG_DEVICES_RAW = os.getenv("CALYPSO_DIAG_DEVICES", "").strip()
 CONTROLLER_UDP_PORT = int(os.getenv("CALYPSO_CONTROLLER_UDP_PORT", "5010"))
 CONTROLLER_OFFLINE_MS = int(os.getenv("CALYPSO_CONTROLLER_OFFLINE_MS", "1000"))
+LIGHTS_STATUS_OFFLINE_MS = int(os.getenv("CALYPSO_LIGHTS_STATUS_OFFLINE_MS", "3000"))
+LIGHT_FAULT_BITS = [
+    {"bit": 0, "value": 0x00000001, "name": "OPENLED"},
+    {"bit": 1, "value": 0x00000002, "name": "OVERTEMP"},
+    {"bit": 2, "value": 0x00000004, "name": "OVERCURR"},
+    {"bit": 3, "value": 0x00000008, "name": "UNDERVOLT"},
+    {"bit": 4, "value": 0x00000010, "name": "INA_ALERT"},
+]
 
 LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
 OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
@@ -415,6 +424,7 @@ def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = 
     mav["safety_armed"] = int(armed)
     mav["base_mode"] = bm
     mav["last_heartbeat_ms"] = int(datetime.utcnow().timestamp() * 1000) & 0xFFFFFFFF
+    mav["last_heartbeat_source"] = source
 
     if prev is not None and int(prev) == int(armed):
         return
@@ -448,6 +458,9 @@ def parse_nmea_line(line: str):
 # Lights config delegation
 load_lights_cfg = lights_cfg.load_lights_cfg
 save_lights_cfg = lights_cfg.save_lights_cfg
+normalize_lights_cfg = lights_cfg.normalize_lights_cfg
+light_channel_pod = lights_cfg.channel_pod
+LIGHT_PODS = ("BAT1", "BAT2")
 
 
 def parse_udp_hosts(raw: str) -> list[str]:
@@ -480,6 +493,388 @@ def send_udp_line(line: str, targets: list[tuple[str, int]]) -> list[str]:
     if errors:
         raise RuntimeError("; ".join(errors))
     return sent
+
+
+def light_pod_host(pod: str) -> str:
+    if pod == "BAT1":
+        return UDP_TX_HOST
+    if pod == "BAT2":
+        return UDP_TX_SLAVE_HOST
+    return ""
+
+
+def lights_ids_for_pod(cfg: dict, pod: str) -> list[int]:
+    pod_cfg = (cfg.get("pods") or {}).get(pod) or {}
+    ids = pod_cfg.get("lamp_ids", [])
+    if not isinstance(ids, list):
+        return []
+    return sorted(set(int(x) for x in ids if isinstance(x, int) and x >= 1))
+
+
+def light_channels_for_id(cfg: dict, light_id: int, pod: str = "") -> list[str]:
+    channels = cfg.get("channels") or {}
+    out: list[str] = []
+    for ch_key, ch_cfg in channels.items():
+        if not isinstance(ch_cfg, dict):
+            continue
+        ch_pod = str(ch_cfg.get("pod") or light_channel_pod(str(ch_key)))
+        if pod and ch_pod != pod:
+            continue
+        ids = ch_cfg.get("lamp_ids", [])
+        if isinstance(ids, list) and light_id in ids:
+            out.append(str(ch_key))
+    return sorted(out, key=lambda x: int(x) if x.isdigit() else 99)
+
+
+def build_lights_ids_line(pod: str, ids: list[int], cmd_id: int, ts: int) -> str:
+    fields = [
+        "SFC", pod, "CMD", "2",
+        str(cmd_id), str(ts),
+        "CmdId", str(cmd_id),
+        "Type", "LGT_IDS",
+        "Ids", ";".join(str(x) for x in ids),
+    ]
+    return build_nmea_line(fields)
+
+
+def send_lights_ids_messages(cfg: Optional[dict] = None) -> dict:
+    cfg = cfg or load_lights_cfg()
+    cmd_id = next_cmd_id()
+    ts = int(state["last_update_ms"] or 0)
+    sent_messages: list[dict] = []
+    skipped: list[dict] = []
+
+    for pod in LIGHT_PODS:
+        host = light_pod_host(pod)
+        ids = lights_ids_for_pod(cfg, pod)
+        if not host:
+            skipped.append({"pod": pod, "reason": "host not configured", "ids": ids})
+            continue
+
+        line = build_lights_ids_line(pod, ids, cmd_id, ts)
+        targets = [(host, UDP_TX_PORT)]
+        sent_targets = send_udp_line(line, targets)
+        sent_messages.append({
+            "pod": pod,
+            "ids": ids,
+            "line": line.strip(),
+            "udp_targets": sent_targets,
+        })
+
+    return {
+        "cmd_id": cmd_id,
+        "messages": sent_messages,
+        "skipped": skipped,
+    }
+
+
+def light_fault_active(value) -> bool:
+    if value is None:
+        return False
+    try:
+        return int(value) != 0
+    except Exception:
+        return str(value).strip().upper() not in ("", "0", "OK", "NONE", "NO", "FALSE")
+
+
+def light_fault_mask(value) -> int:
+    if value is None:
+        return 0
+    try:
+        if isinstance(value, str):
+            return int(value.strip(), 0)
+        return int(value)
+    except Exception:
+        return 0
+
+
+def light_fault_names(value) -> list[str]:
+    mask = light_fault_mask(value)
+    return [str(f["name"]) for f in LIGHT_FAULT_BITS if mask & int(f["value"])]
+
+
+def light_fault_text(value) -> str:
+    mask = light_fault_mask(value)
+    if mask == 0:
+        return "0"
+    names = light_fault_names(mask)
+    suffix = f" {'/'.join(names)}" if names else " UNKNOWN"
+    return f"0x{mask:08X}{suffix}"
+
+
+def parse_diag_devices(raw: str) -> list[dict]:
+    devices: list[dict] = []
+    for item in raw.split(";"):
+        parts = [p.strip() for p in item.split("|")]
+        if not parts or not parts[0]:
+            continue
+        node = parts[0]
+        role = parts[1] if len(parts) > 1 and parts[1] else node
+        ip = parts[2] if len(parts) > 2 else ""
+        url = parts[3] if len(parts) > 3 else ""
+        devices.append({"node": node, "role": role, "ip": ip, "url": url})
+    return devices
+
+
+def diag_device_configs() -> list[dict]:
+    if DIAG_DEVICES_RAW:
+        devices = parse_diag_devices(DIAG_DEVICES_RAW)
+        if devices:
+            return devices
+    return [
+        {"node": "BAT1", "role": "MASTER", "ip": "192.168.2.3", "url": "http://192.168.2.3"},
+        {"node": "BAT2", "role": "SLAVE", "ip": "192.168.2.4", "url": "http://192.168.2.4"},
+    ]
+
+
+def build_diagnostics_state() -> dict:
+    now_ms = int(time.monotonic() * 1000)
+    nodes = state.get("nodes", {}) or {}
+    devices: list[dict] = []
+    configured = set()
+
+    def age_from_monotonic(value) -> int | None:
+        if value is None:
+            return None
+        try:
+            return max(0, now_ms - int(value))
+        except Exception:
+            return None
+
+    def device_row(node_name: str, role: str = "", fallback_ip: str = "", fallback_url: str = "") -> dict:
+        node = nodes.get(node_name, {}) or {}
+        rx_ip = str(node.get("ip") or "")
+        ip = str(fallback_ip or rx_ip or "")
+        url = str(fallback_url or (f"http://{ip}" if ip else ""))
+        last_rx_age = age_from_monotonic(node.get("last_rx_monotonic_ms"))
+        last_hb_age = age_from_monotonic(node.get("last_seen_monotonic_ms"))
+        network_ok = last_rx_age is not None and last_rx_age <= OFFLINE_MS
+        online = bool(node.get("online")) if node.get("online") is not None else network_ok
+        status_kind = "ok" if network_ok and online else "bad"
+        return {
+            "node": node_name,
+            "kind": "Power pod",
+            "role": role or node_name,
+            "online": online,
+            "network_ok": network_ok,
+            "status_kind": status_kind,
+            "status_text": "ONLINE" if status_kind == "ok" else "OFFLINE",
+            "ip": ip,
+            "rx_ip": rx_ip,
+            "url": url,
+            "udp_port": node.get("udp_port"),
+            "last_rx_ms": node.get("last_rx_ms"),
+            "last_hb_ms": node.get("last_hb_ms"),
+            "last_rx_age_ms": last_rx_age,
+            "last_hb_age_ms": last_hb_age,
+        }
+
+    def light_child_row(pod: str, light_id: int, st: dict | None) -> dict:
+        channels = light_channels_for_id(lights_current_cfg, light_id, pod)
+        role = f"{pod} {'/'.join(f'CH{x}' for x in channels)}".strip()
+        if not st:
+            return {
+                "node": f"LGT{light_id}",
+                "kind": "Faro",
+                "role": role,
+                "online": False,
+                "network_ok": False,
+                "status_kind": "warn",
+                "status_text": "MISSING",
+                "detail": "Nessuno status ricevuto.",
+            }
+
+        age = age_from_monotonic(st.get("last_seen_monotonic_ms"))
+        fault = st.get("Fault")
+        has_fault = light_fault_active(fault)
+        is_stale = age is None or age > LIGHTS_STATUS_OFFLINE_MS
+        kind = "bad" if has_fault else ("warn" if is_stale else "ok")
+        text = "FAULT" if has_fault else ("STALE" if is_stale else "OK")
+        return {
+            "node": f"LGT{light_id}",
+            "kind": "Faro",
+            "role": role,
+            "online": not is_stale,
+            "network_ok": not is_stale and not has_fault,
+            "status_kind": kind,
+            "status_text": text,
+            "last_rx_age_ms": age,
+            "detail": (
+                f"mode={st.get('Mode', '-')} state={st.get('State', '-')} "
+                f"dim={st.get('Dim', '-')} out={st.get('Out', '-')} "
+                f"fault={light_fault_text(fault)} uptime={st.get('Uptime', '-')}"
+            ),
+            "faults": light_fault_names(fault),
+        }
+
+    for cfg in diag_device_configs():
+        node_name = str(cfg.get("node") or "").strip()
+        if not node_name:
+            continue
+        configured.add(node_name)
+        devices.append(device_row(
+            node_name,
+            str(cfg.get("role") or node_name),
+            str(cfg.get("ip") or ""),
+            str(cfg.get("url") or ""),
+        ))
+
+    for node_name in sorted(str(k) for k in nodes.keys()):
+        if node_name in configured:
+            continue
+        if node_name.startswith("LGT"):
+            continue
+        devices.append(device_row(node_name))
+
+    blueos_ip = os.getenv("BLUEOS_IP", "192.168.2.2").strip() or "192.168.2.2"
+    mav = state.get("mav", {}) or {}
+    mav_age = age_from_monotonic(mav.get("last_seen_monotonic_ms"))
+    mav_enabled = bool(MAVLINK_ENABLED)
+    mav_ok = mav_enabled and mav_age is not None and mav_age <= 3000
+    devices.append({
+        "node": "BLUEOS",
+        "kind": "BlueOS / MAVLink",
+        "role": "MAVLINK",
+        "online": mav_ok,
+        "network_ok": mav_ok,
+        "status_kind": "ok" if mav_ok else ("warn" if mav_enabled else "muted"),
+        "status_text": "MAVLINK OK" if mav_ok else ("WAIT MAVLINK" if mav_enabled else "DISABLED"),
+        "ip": blueos_ip,
+        "url": f"http://{blueos_ip}",
+        "last_rx_age_ms": mav_age,
+        "detail": f"msgs={mav.get('msgs', 0)} source={mav.get('last_heartbeat_source', '-')}",
+    })
+
+    ctrl = state.get("controller", {}) or {}
+    ctrl_age = age_from_monotonic(ctrl.get("last_seen_monotonic_ms"))
+    broker_ok = bool(controller_udp_stats.listener_ok)
+    devices.append({
+        "node": "CTRL_BROKER",
+        "kind": "Controller broker",
+        "role": "UDP RX",
+        "online": broker_ok,
+        "network_ok": broker_ok,
+        "status_kind": "ok" if broker_ok else "bad",
+        "status_text": "LISTEN" if broker_ok else "OFF",
+        "ip": controller_udp_stats.listener_bind,
+        "udp_port": controller_udp_stats.listener_port,
+        "last_rx_age_ms": ctrl_age,
+        "detail": f"valid={controller_udp_stats.rx_valid} invalid={controller_udp_stats.rx_invalid}",
+    })
+
+    joy_ok = bool(ctrl.get("online"))
+    joy_stale = bool((ctrl.get("health") or {}).get("link_stale"))
+    devices.append({
+        "node": "JOYSTICK",
+        "kind": "Controller link",
+        "role": str(ctrl.get("active_link") or "no_link").upper(),
+        "online": joy_ok,
+        "network_ok": joy_ok,
+        "status_kind": "ok" if joy_ok else ("warn" if ctrl_age is not None else "bad"),
+        "status_text": "ONLINE" if joy_ok else ("STALE" if joy_stale else "NO LINK"),
+        "last_rx_age_ms": ctrl_age,
+        "detail": f"quality={ctrl.get('source_quality', '-')} vjoy={(ctrl.get('health') or {}).get('vjoy_ok', '-')}",
+    })
+
+    sonar = state.get("sonar", {}).get("ping360", {}) or {}
+    sonar_ip = str(sonar.get("remote_ip") or sonar.get("fallback_ip") or "")
+    sonar_age = age_from_monotonic(sonar.get("last_rx_monotonic_ms"))
+    sonar_enabled = bool(sonar.get("enabled"))
+    sonar_link = sonar_enabled and bool(sonar.get("connected")) and bool(sonar.get("scanning"))
+    sonar_ok = sonar_link and sonar_age is not None and sonar_age <= 3000
+    devices.append({
+        "node": "PING360",
+        "kind": "Sonar",
+        "role": "UDP",
+        "online": sonar_ok,
+        "network_ok": sonar_ok,
+        "status_kind": "ok" if sonar_ok else ("warn" if sonar_enabled else "muted"),
+        "status_text": "DATA OK" if sonar_ok else ("WAIT DATA" if sonar_link else ("WAIT" if sonar_enabled else "DISABLED")),
+        "ip": sonar_ip,
+        "udp_port": sonar.get("port"),
+        "last_rx_age_ms": sonar_age,
+        "detail": f"rx={sonar.get('rx_total', 0)} err={sonar.get('last_err') or '-'}",
+    })
+
+    lights_current_cfg = load_lights_cfg()
+    light_status_by_id = state.get("lights", {}).get("ids", {}) or {}
+    for pod, ip in (("BAT1", "192.168.2.3"), ("BAT2", "192.168.2.4")):
+        pod_ids = lights_ids_for_pod(lights_current_cfg, pod)
+        missing: list[int] = []
+        stale: list[int] = []
+        faults: list[int] = []
+        ages: list[int] = []
+        light_children: list[dict] = []
+
+        for light_id in pod_ids:
+            st = light_status_by_id.get(str(light_id))
+            light_children.append(light_child_row(pod, light_id, st))
+            if not st:
+                missing.append(light_id)
+                continue
+            age = age_from_monotonic(st.get("last_seen_monotonic_ms"))
+            if age is None:
+                missing.append(light_id)
+                continue
+            ages.append(age)
+            if age > LIGHTS_STATUS_OFFLINE_MS:
+                stale.append(light_id)
+            fault = st.get("Fault")
+            if light_fault_active(fault):
+                faults.append(light_id)
+
+        if not pod_ids:
+            light_kind = "muted"
+            light_text = "NO IDS"
+            light_online = False
+            light_ok = False
+        elif faults:
+            light_kind = "bad"
+            light_text = "FAULT"
+            light_online = True
+            light_ok = False
+        elif missing:
+            light_kind = "warn"
+            light_text = "WAIT STATUS"
+            light_online = False
+            light_ok = False
+        elif stale:
+            light_kind = "warn"
+            light_text = "STALE"
+            light_online = False
+            light_ok = False
+        else:
+            light_kind = "ok"
+            light_text = "STATUS OK"
+            light_online = True
+            light_ok = True
+
+        detail_parts = [f"IDs={';'.join(str(x) for x in pod_ids) or '-'}"]
+        pod_channels = [ch for ch in ("1", "2", "3", "4") if light_channel_pod(ch) == pod]
+        detail_parts.append(f"canali={'/'.join(f'CH{x}' for x in pod_channels)}")
+        if missing:
+            detail_parts.append(f"missing={';'.join(str(x) for x in missing)}")
+        if stale:
+            detail_parts.append(f"stale={';'.join(str(x) for x in stale)}")
+        devices.append({
+            "node": f"LGT_{pod}",
+            "kind": "Fari",
+            "role": pod,
+            "online": light_online,
+            "network_ok": light_ok,
+            "status_kind": light_kind,
+            "status_text": light_text,
+            "ip": ip,
+            "url": f"http://{ip}",
+            "last_rx_age_ms": max(ages) if ages else None,
+            "detail": "; ".join(detail_parts),
+            "children": light_children,
+        })
+
+    return {
+        "offline_ms": OFFLINE_MS,
+        "devices": devices,
+    }
 
 # Ping360 runtime
 ping360_stop: Optional[asyncio.Event] = None
@@ -531,6 +926,13 @@ def handle_udp_datagram(data: bytes, addr):
     latest["last_line"] = parsed["raw"]
     append_telemetry_csv(parsed)
     update_state(parsed)
+    src = parsed.get("src")
+    if src:
+        node = state["nodes"].setdefault(src, {})
+        node["last_rx_monotonic_ms"] = int(time.monotonic() * 1000)
+        if addr:
+            node["ip"] = addr[0]
+            node["udp_port"] = addr[1]
 
     asyncio.create_task(ws_broadcast({
         "type": "udp",
@@ -745,6 +1147,7 @@ def api_state():
             "last_seq": controller_udp_stats.rx_last_seq,
             "last_active_link": controller_udp_stats.rx_last_active_link,
         },
+        "diagnostics": build_diagnostics_state(),
     }
 
 @app.get("/api/health")
@@ -847,6 +1250,20 @@ async def cmd_lights_channel(body: dict = Body(...)):
     return {"ok": True, "cmd_id": cmd_id, "lamp_ids": lamp_ids, "await_ack": False, "udp_targets": sent_targets}
 
 
+@app.post("/api/cmd/lights_ids")
+async def cmd_lights_ids(body: Optional[dict] = Body(None)):
+    cfg = load_lights_cfg()
+    if body and isinstance(body, dict) and isinstance(body.get("pods"), dict):
+        cfg = normalize_lights_cfg({"version": cfg.get("version", 1), "channels": cfg.get("channels", {}), "pods": body["pods"]})
+
+    try:
+        result = send_lights_ids_messages(cfg)
+    except Exception as e:
+        return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
+
+    return {"ok": True, **result}
+
+
 @app.post("/api/cmd/vmot_master")
 @app.post("/api/cmd/vmot")
 async def cmd_vmot_master(body: dict = Body(...)):
@@ -902,7 +1319,7 @@ def api_set_lights_cfg(cfg: dict = Body(...)):
     if "channels" not in cfg or not isinstance(cfg["channels"], dict):
         return JSONResponse({"ok": False, "err": "channels missing"}, status_code=400)
 
-    out = {"version": int(cfg.get("version", 1)), "channels": {}}
+    out = {"version": int(cfg.get("version", 1)), "channels": {}, "pods": {}}
     for k in ("1", "2", "3", "4"):
         ch = cfg["channels"].get(k, {})
         if not isinstance(ch, dict):
@@ -914,10 +1331,33 @@ def api_set_lights_cfg(cfg: dict = Body(...)):
             return JSONResponse({"ok": False, "err": f"channels.{k}.lamp_ids invalid"}, status_code=400)
 
         cleaned = [x for x in lamp_ids if isinstance(x, int) and x >= 1]
-        out["channels"][k] = {"name": name, "lamp_ids": sorted(set(cleaned))}
+        out["channels"][k] = {"name": name, "pod": light_channel_pod(k), "lamp_ids": sorted(set(cleaned))}
+
+    pods = cfg.get("pods", {})
+    if not isinstance(pods, dict):
+        return JSONResponse({"ok": False, "err": "pods invalid"}, status_code=400)
+
+    default_cfg = load_lights_cfg()
+    for pod in LIGHT_PODS:
+        pod_cfg = pods.get(pod, (default_cfg.get("pods") or {}).get(pod, {}))
+        if not isinstance(pod_cfg, dict):
+            return JSONResponse({"ok": False, "err": f"pods.{pod} invalid"}, status_code=400)
+
+        name = str(pod_cfg.get("name", pod))
+        lamp_ids = pod_cfg.get("lamp_ids", [])
+        if not isinstance(lamp_ids, list):
+            return JSONResponse({"ok": False, "err": f"pods.{pod}.lamp_ids invalid"}, status_code=400)
+
+        cleaned = [x for x in lamp_ids if isinstance(x, int) and x >= 1]
+        out["pods"][pod] = {"name": name, "lamp_ids": sorted(set(cleaned))}
 
     save_lights_cfg(out)
-    return {"ok": True}
+    sync = None
+    try:
+        sync = send_lights_ids_messages(out)
+    except Exception as e:
+        return {"ok": True, "lights_ids": None, "lights_ids_err": f"sync failed: {e}"}
+    return {"ok": True, "lights_ids": sync}
 
 @app.get("/api/config/autolog")
 def api_get_autolog_cfg():
@@ -1426,6 +1866,7 @@ async def mavlink_reader():
 
             t = now_ms()
             state["mav"]["last_ms"] = t
+            state["mav"]["last_seen_monotonic_ms"] = int(time.monotonic() * 1000)
             state["mav"]["msgs"] += 1
 
             mt = msg.get_type()
@@ -1492,6 +1933,7 @@ async def mavlink_ws_loop():
             print(f"[mavlink] connecting to {MAVLINK_WS_URL}")
             async with websockets.connect(MAVLINK_WS_URL, ping_interval=20, ping_timeout=20) as ws:
                 print("[mavlink] connected")
+                state.setdefault("mav", {})["connected"] = True
 
                 async for raw in ws:
                     try:
@@ -1500,6 +1942,8 @@ async def mavlink_ws_loop():
                         continue
 
                     msg = obj.get("message") or obj.get("mavlink") or obj
+                    state.setdefault("mav", {})["last_seen_monotonic_ms"] = int(time.monotonic() * 1000)
+                    state["mav"]["msgs"] = int(state["mav"].get("msgs", 0)) + 1
                     if isinstance(msg, dict):
                         update_depth_from_dict(msg)
                     mtype = msg.get("type") or msg.get("msg") or msg.get("name")
@@ -1597,5 +2041,6 @@ async def mavlink_ws_loop():
                                 "thr": {k: state["thr"].get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
                             })
         except Exception as e:
+            state.setdefault("mav", {})["connected"] = False
             print(f"[mavlink] error: {e}")
             await asyncio.sleep(2.0)

@@ -287,6 +287,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                 for (msg_id, src, dst, payload) in frames:
                     state["counters"]["ping360_rx"] += 1
                     runtime["last_rx_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
+                    runtime["last_rx_monotonic_ms"] = int(time.monotonic() * 1000)
 
                     if msg_id == 2301:
                         dd = decode_ping360_auto_device_data(payload)

@@ -4,9 +4,13 @@ export let lightsCfg = null;
 const ACK_TIMEOUT_MS = 2000;
 const ACK_POLL_MS = 120;
 
+function channelPod(ch) {
+  return (String(ch) === "1" || String(ch) === "2") ? "BAT1" : "BAT2";
+}
+
 export function parseIdsCsv(s) {
   return (s || "")
-    .split(",")
+    .split(/[;,|]/)
     .map(x => x.trim())
     .filter(x => x.length)
     .map(x => parseInt(x, 10))
@@ -22,13 +26,25 @@ export async function loadLightsCfg() {
 
 export function renderLightsCfg() {
   const ch = lightsCfg?.channels || {};
-  let html = `<table><tr><th>CH</th><th>Name</th><th>Lamp IDs (csv)</th></tr>`;
+  const pods = lightsCfg?.pods || {};
+  let html = `<table><tr><th>CH</th><th>Pod</th><th>Name</th><th>Lamp IDs (csv)</th></tr>`;
   for (const k of ["1", "2", "3", "4"]) {
     const c = ch[k] || { name: `CH${k}`, lamp_ids: [] };
     html += `<tr>
       <td>${k}</td>
+      <td>${c.pod || channelPod(k)}</td>
       <td><input id="lgt_name_${k}" value="${c.name ?? ""}" style="width:120px"></td>
       <td><input id="lgt_ids_${k}" value="${(c.lamp_ids || []).join(",")}" style="width:180px"></td>
+    </tr>`;
+  }
+  html += `</table>`;
+  html += `<div class="diagSub" style="margin:10px 0 6px;">Pod lamp IDs</div>`;
+  html += `<table><tr><th>Pod</th><th>Lamp IDs</th></tr>`;
+  for (const pod of ["BAT1", "BAT2"]) {
+    const p = pods[pod] || { lamp_ids: pod === "BAT1" ? [1, 2, 3] : [4, 5] };
+    html += `<tr>
+      <td>${pod}</td>
+      <td><input id="lgt_pod_ids_${pod}" value="${(p.lamp_ids || []).join(",")}" style="width:180px"></td>
     </tr>`;
   }
   html += `</table>`;
@@ -36,11 +52,18 @@ export function renderLightsCfg() {
 }
 
 export async function saveLightsCfg() {
-  const cfg = { version: 1, channels: {} };
+  const cfg = { version: 1, channels: {}, pods: {} };
   for (const k of ["1", "2", "3", "4"]) {
     cfg.channels[k] = {
       name: (domEl(`lgt_name_${k}`).value || `CH${k}`),
+      pod: channelPod(k),
       lamp_ids: Array.from(new Set(parseIdsCsv(domEl(`lgt_ids_${k}`).value))).sort((a, b) => a - b)
+    };
+  }
+  for (const pod of ["BAT1", "BAT2"]) {
+    cfg.pods[pod] = {
+      name: pod,
+      lamp_ids: Array.from(new Set(parseIdsCsv(domEl(`lgt_pod_ids_${pod}`).value))).sort((a, b) => a - b)
     };
   }
   const r = await fetch("/api/config/lights", {
@@ -54,9 +77,40 @@ export async function saveLightsCfg() {
     console.error("save cfg err", t);
     return;
   }
-  domEl("lgt_cfg_status").textContent = "saved";
+  const j = await r.json().catch(() => ({}));
+  domEl("lgt_cfg_status").textContent = j.lights_ids_err ? "saved, sync ERR" : "saved + ids sync";
   lightsCfg = cfg;
   renderLightsCtrl();
+}
+
+export async function sendLightsIds() {
+  const cfg = lightsCfg || {};
+  const pods = {};
+  for (const pod of ["BAT1", "BAT2"]) {
+    const input = domEl(`lgt_pod_ids_${pod}`);
+    const current = cfg.pods?.[pod]?.lamp_ids || [];
+    pods[pod] = {
+      name: pod,
+      lamp_ids: input
+        ? Array.from(new Set(parseIdsCsv(input.value))).sort((a, b) => a - b)
+        : current
+    };
+  }
+
+  const r = await fetch("/api/cmd/lights_ids", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pods })
+  });
+  const j = await r.json().catch(() => ({}));
+  const st = domEl("lgt_cfg_status");
+  if (!r.ok || !j.ok) {
+    if (st) st.textContent = "ids sync ERR";
+    console.error("lights ids sync err", j);
+    return;
+  }
+  lightsCfg = { ...(lightsCfg || {}), pods };
+  if (st) st.textContent = `ids sync CmdId ${j.cmd_id}`;
 }
 
 function sleep(ms) {
