@@ -47,6 +47,7 @@ from backend.app.state import (
     next_cmd_id,
     register_cmd,
     get_cmd_ack_status,
+    expire_pending_cmds,
     set_session_paths,
     make_sid,
     append_telemetry_csv,
@@ -67,6 +68,8 @@ DIAG_DEVICES_RAW = os.getenv("CALYPSO_DIAG_DEVICES", "").strip()
 CONTROLLER_UDP_PORT = int(os.getenv("CALYPSO_CONTROLLER_UDP_PORT", "5010"))
 CONTROLLER_OFFLINE_MS = int(os.getenv("CALYPSO_CONTROLLER_OFFLINE_MS", "1000"))
 LIGHTS_STATUS_OFFLINE_MS = int(os.getenv("CALYPSO_LIGHTS_STATUS_OFFLINE_MS", "3000"))
+PODS_HEARTBEAT_ENABLED = os.getenv("CALYPSO_PODS_HEARTBEAT_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+PODS_HEARTBEAT_HZ = max(0.1, float(os.getenv("CALYPSO_PODS_HEARTBEAT_HZ", "1")))
 LIGHT_FAULT_BITS = [
     {"bit": 0, "value": 0x00000001, "name": "OPENLED"},
     {"bit": 1, "value": 0x00000002, "name": "OVERTEMP"},
@@ -285,6 +288,20 @@ state.setdefault("autolog", {
     "last_start_sid": None,
     "last_start_depth_m": None,
 })
+state.setdefault("sfc_heartbeat", {
+    "enabled": PODS_HEARTBEAT_ENABLED,
+    "hz": PODS_HEARTBEAT_HZ,
+    "seq": 0,
+    "tx_total": 0,
+    "tx_ok": 0,
+    "tx_err": 0,
+    "last_ts_ms": None,
+    "last_error": None,
+    "pods": {
+        "BAT1": {"last_ts_ms": None, "last_line": None, "last_targets": [], "last_error": None},
+        "BAT2": {"last_ts_ms": None, "last_line": None, "last_targets": [], "last_error": None},
+    },
+})
 
 # ----------------------------
 # WebSocket clients
@@ -455,6 +472,16 @@ def build_nmea_line(fields: list[str]) -> str:
 def parse_nmea_line(line: str):
     return parser.parse_nmea_line(line)
 
+
+_tx_seq_by_msg: dict[str, int] = {}
+
+
+def next_tx_seq(msg: str) -> int:
+    key = str(msg or "").upper() or "GEN"
+    seq = (_tx_seq_by_msg.get(key, 0) + 1) & 0xFFFFFFFF
+    _tx_seq_by_msg[key] = seq
+    return seq
+
 # Lights config delegation
 load_lights_cfg = lights_cfg.load_lights_cfg
 save_lights_cfg = lights_cfg.save_lights_cfg
@@ -535,6 +562,66 @@ def build_lights_ids_line(pod: str, ids: list[int], cmd_id: int, ts: int) -> str
         "Ids", ";".join(str(x) for x in ids),
     ]
     return build_nmea_line(fields)
+
+
+def build_pod_heartbeat_line(pod: str, seq: int, ts: int) -> str:
+    hb = state.setdefault("sfc_heartbeat", {})
+    fields = [
+        "SFC", pod, "HB", "2",
+        str(seq), str(ts),
+        "Up", "1",
+        "NodeState", "1",
+        "RxErr", str(int(state.get("counters", {}).get("parse_err", 0))),
+        "TxErr", str(int(hb.get("tx_err", 0))),
+    ]
+    return build_nmea_line(fields)
+
+
+def record_pod_heartbeat_tx(pod: str, ts: int, line: str, targets: list[str] | None = None, error: str | None = None) -> None:
+    hb = state.setdefault("sfc_heartbeat", {})
+    hb["enabled"] = PODS_HEARTBEAT_ENABLED
+    hb["hz"] = PODS_HEARTBEAT_HZ
+    hb["last_ts_ms"] = int(ts)
+    hb["seq"] = int(hb.get("seq", 0))
+    hb["tx_total"] = int(hb.get("tx_total", 0)) + 1
+    pods = hb.setdefault("pods", {})
+    pod_state = pods.setdefault(str(pod), {"last_ts_ms": None, "last_line": None, "last_targets": [], "last_error": None})
+    pod_state["last_ts_ms"] = int(ts)
+    pod_state["last_line"] = line.strip()
+    pod_state["last_targets"] = list(targets or [])
+    pod_state["last_error"] = None if error is None else str(error)
+    if error is None:
+        hb["tx_ok"] = int(hb.get("tx_ok", 0)) + 1
+    else:
+        hb["tx_err"] = int(hb.get("tx_err", 0)) + 1
+    hb["last_error"] = "; ".join(
+        f"{pod_name}: {pod_info.get('last_error')}"
+        for pod_name, pod_info in pods.items()
+        if pod_info.get("last_error")
+    ) or None
+
+
+async def pods_heartbeat_task():
+    period_s = 1.0 / PODS_HEARTBEAT_HZ
+    while True:
+        ts = now_ms()
+        seq = next_tx_seq("HB")
+        hb = state.setdefault("sfc_heartbeat", {})
+        hb["seq"] = seq
+
+        for pod in LIGHT_PODS:
+            host = light_pod_host(pod)
+            if not host:
+                record_pod_heartbeat_tx(pod, ts, "", [], "host not configured")
+                continue
+
+            line = build_pod_heartbeat_line(pod, seq, ts)
+            try:
+                sent_targets = send_udp_line(line, [(host, UDP_TX_PORT)])
+                record_pod_heartbeat_tx(pod, ts, line, sent_targets, None)
+            except Exception as e:
+                record_pod_heartbeat_tx(pod, ts, line, [], str(e))
+        await asyncio.sleep(period_s)
 
 
 def send_lights_ids_messages(cfg: Optional[dict] = None) -> dict:
@@ -1084,6 +1171,8 @@ async def startup():
     asyncio.create_task(offline_watchdog())
     asyncio.create_task(autolog_watchdog())
     asyncio.create_task(controller_broker_watchdog())
+    if PODS_HEARTBEAT_ENABLED:
+        asyncio.create_task(pods_heartbeat_task())
 
     # Ping360 task
     start_ping360_runtime()
@@ -1115,6 +1204,7 @@ async def shutdown():
 # ----------------------------
 @app.get("/api/state")
 def api_state():
+    expire_pending_cmds()
     return {
         **state,
         "udp": {
@@ -1152,6 +1242,7 @@ def api_state():
 
 @app.get("/api/health")
 def api_health():
+    expire_pending_cmds()
     pods_summary = {}
     for pod_name in ("BAT1", "BAT2"):
         pod = state.get("pods", {}).get(pod_name, {}) or {}
@@ -1193,6 +1284,8 @@ def api_health():
             "last_prefix": udp_stats.rx_last_prefix,
         },
         "controller": state.get("controller"),
+        "strobo": state.get("strobo"),
+        "sfc_heartbeat": state.get("sfc_heartbeat"),
         "controller_udp": {
             "listener_ok": controller_udp_stats.listener_ok,
             "bind": controller_udp_stats.listener_bind,
@@ -1302,6 +1395,46 @@ async def cmd_vmot_master(body: dict = Body(...)):
         payload={"on": on},
     )
     return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst}
+
+
+@app.post("/api/cmd/strobo")
+async def cmd_strobo(body: dict = Body(...)):
+    raw_on = body.get("on", body.get("enable", body.get("val")))
+    if raw_on is None:
+        return JSONResponse({"ok": False, "err": "on missing"}, status_code=400)
+    norm_on = normalize_bool01(raw_on)
+    if norm_on is None:
+        return JSONResponse({"ok": False, "err": "bad on"}, status_code=400)
+
+    on = int(norm_on)
+    dst = "BAT1"
+    host = light_pod_host(dst)
+    if not host:
+        return JSONResponse({"ok": False, "err": "master pod host not configured"}, status_code=500)
+
+    cmd_id = next_cmd_id()
+    ts = int(state["last_update_ms"] or 0)
+    fields = [
+        "SFC", dst, "CMD", "2",
+        str(cmd_id), str(ts),
+        "CmdId", str(cmd_id),
+        "Type", "STROBO",
+        "On", str(on),
+    ]
+    line = build_nmea_line(fields)
+    try:
+        sent_targets = send_udp_line(line, [(host, UDP_TX_PORT)])
+    except Exception as e:
+        return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
+
+    register_cmd(
+        cmd_id=cmd_id,
+        cmd_type="STROBO",
+        dst=dst,
+        ts_ms=ts,
+        payload={"on": on},
+    )
+    return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst, "udp_targets": sent_targets}
 
 @app.get("/api/cmd/ack")
 def api_cmd_ack(cmd_id: int):

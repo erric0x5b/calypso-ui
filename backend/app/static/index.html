@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=20">
+  <link rel="stylesheet" href="app.css?v=21">
 </head>
 
 <body>
@@ -26,6 +26,7 @@
       <button class="tab" data-tab="diagnostics">DIAGNOSTICA</button>
       <button class="tab" data-tab="setup">SETUP</button>
       <button id="btn_help" class="tabHelp">HELP</button>
+      <button id="btn_strobo" class="tab tabAction tabStrobo" type="button">STROBO -</button>
     </div>
     <div class="widgetsMenu">
       <button id="btn_widgets">WIDGETS</button>
@@ -237,7 +238,12 @@
 
               <section class="setupCard">
                 <h3 class="setupTitle">Joystick Mapping</h3>
-                <label class="setupLabel" for="setup_gp_device">Joystick device</label>
+                <label class="setupLabel" for="setup_input_source">Input source</label>
+                <select id="setup_input_source">
+                  <option value="broker">Controller broker UDP</option>
+                  <option value="browser_gamepad">Browser gamepad</option>
+                </select>
+                <label class="setupLabel" id="setup_gp_device_label" for="setup_gp_device">Joystick device</label>
                 <select id="setup_gp_device">
                   <option value="-1">Auto (first connected)</option>
                 </select>
@@ -611,7 +617,7 @@
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
   <script src="sonar_ping360.js?v=4" defer></script>
-  <script type="module" src="js/main.js?v=25"></script>
+  <script type="module" src="js/main.js?v=28"></script>
 </body>
 
 </html>

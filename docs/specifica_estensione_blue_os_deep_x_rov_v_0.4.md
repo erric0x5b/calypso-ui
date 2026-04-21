@@ -78,6 +78,7 @@ Vantaggi:
 - `HB` (ROV nodes → SFC) – **1 Hz**
   - Scopo: presenza nodo e contatori diagnostica
   - Keys tipiche: `Up` (0/1), `NodeState` (u8), `RxErr` (u32), `TxErr` (u32)
+  - Estensione backend UI: anche `SFC` può inviare `HB` verso `BAT1` e `BAT2` a **1 Hz** per consentire watchdog lato pod con lo stesso frame v2.
 
 - `ENV` (BATx → SFC) – **10 Hz**
   - Scopo: misure elettriche/ambientali pod
@@ -113,6 +114,10 @@ Vantaggi:
     - `Type=VMOT`
     - payload: `On` (0/1) oppure alias `Val`
     - Regola UI: enable con hold 3 secondi, disable immediato (touch + joystick)
+  - Comando strobo pod master:
+    - `Type=STROBO`
+    - payload: `On` (0/1)
+    - destinazione: `DST=BAT1`
   - Tracciamento MAVLink:
     - da `HEARTBEAT`: `MAV_MODE_SAFETY_ARMED`
     - log eventi su cambio stato arm/disarm

@@ -14,6 +14,8 @@ let missionCurrentSid = null;
 let missionMetaAppliedSid = null;
 let gpLoopStarted = false;
 let gpPrevButtons = [];
+let ctrlPrevSignals = {};
+let ctrlSignalsPrimed = false;
 let gpLightCh = 1;
 let gpBusyLight = false;
 let gpBusyEvent = false;
@@ -29,6 +31,7 @@ let vmotHoldActive = false;
 let vmotHoldStartMs = 0;
 let vmotLastBeepSec = -1;
 let vmotCmdBusy = false;
+let stroboCmdBusy = false;
 let gpVmotHoldActive = false;
 let gpVmotHoldStartMs = 0;
 let gpVmotLastBeepSec = -1;
@@ -36,9 +39,12 @@ let gpDeviceOptionsSignature = "";
 let autologCfg = { enabled: true, depth_m: null, hyst_m: null };
 let sonarCfg = null;
 
+const INPUT_SOURCE_BROKER = "broker";
+const INPUT_SOURCE_BROWSER = "browser_gamepad";
 const VMOT_ENABLE_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
 const VMOT_ACK_POLL_MS = 120;
+const STROBO_ACK_TIMEOUT_MS = 3000;
 const ALARM_FILTERS = new Set(["all", "crit", "error", "warn"]);
 const SONAR_CFG_FIELDS = [
     "host",
@@ -65,6 +71,7 @@ const GP_ACTIONS = [
     { key: "light_ch_next", label: "Canale luce successivo", def: 13 },
     { key: "light_on", label: "Luce ON (dim corrente)", def: 0 },
     { key: "light_off", label: "Luce OFF", def: 1 },
+    { key: "strobo_toggle", label: "STROBO toggle master", def: -1 },
     { key: "vmot_enable_hold", label: "VMOT ENABLE hold 3s", def: -1 },
     { key: "vmot_disable", label: "VMOT DISABLE immediato", def: -1 },
     { key: "add_mark", label: "Aggiungi marker missione", def: 2 },
@@ -237,6 +244,30 @@ function saveGpMap(map) {
     localStorage.setItem("calypso_gp_map", JSON.stringify(gpMap));
 }
 
+function normalizeCtrlMap(raw) {
+    const out = Object.fromEntries(GP_ACTIONS.map((x) => [x.key, ""]));
+    const src = (raw && typeof raw === "object") ? raw : {};
+    for (const it of GP_ACTIONS) {
+        const v = typeof src[it.key] === "string" ? src[it.key].trim() : "";
+        out[it.key] = v;
+    }
+    return out;
+}
+
+function loadCtrlMap() {
+    try {
+        const raw = JSON.parse(localStorage.getItem("calypso_ctrl_map") || "{}");
+        return normalizeCtrlMap(raw);
+    } catch {
+        return normalizeCtrlMap({});
+    }
+}
+
+function saveCtrlMap(map) {
+    ctrlMap = normalizeCtrlMap(map);
+    localStorage.setItem("calypso_ctrl_map", JSON.stringify(ctrlMap));
+}
+
 function gpSelectOptions(selected) {
     let html = `<option value="-1">Disabled</option>`;
     for (let i = 0; i <= 15; i++) {
@@ -244,6 +275,66 @@ function gpSelectOptions(selected) {
     }
     return html;
 }
+
+function currentInputSource() {
+    return uiPrefs.inputSource === INPUT_SOURCE_BROWSER ? INPUT_SOURCE_BROWSER : INPUT_SOURCE_BROKER;
+}
+
+function controllerSignalIsActive(v) {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return Number.isFinite(v) && v !== 0;
+    if (typeof v === "string") {
+        const tok = v.trim().toLowerCase();
+        if (!tok || tok === "0" || tok === "false" || tok === "off" || tok === "no") return false;
+        const n = Number(tok);
+        if (Number.isFinite(n)) return n !== 0;
+        return true;
+    }
+    return !!v;
+}
+
+function controllerSignalOptions(ctrl = null) {
+    const source = ctrl || snapshot?.controller || {};
+    const groups = [
+        ["buttons", source.buttons || {}],
+        ["switches", source.switches || {}],
+        ["mapped", source.mapped || {}],
+    ];
+    const items = [];
+    for (const [group, values] of groups) {
+        const keys = Object.keys(values || {}).sort();
+        for (const key of keys) {
+            const value = values[key];
+            const active = controllerSignalIsActive(value);
+            const shown = typeof value === "boolean"
+                ? (value ? "ON" : "OFF")
+                : (typeof value === "number" ? fmtControllerValue(value, 2) : String(value));
+            items.push({
+                value: `${group}.${key}`,
+                label: `${group}.${key} (${shown}${active ? ", active" : ""})`,
+            });
+        }
+    }
+    return items;
+}
+
+function controllerSelectOptions(selected, ctrl = null) {
+    const selectedValue = typeof selected === "string" ? selected : "";
+    const options = controllerSignalOptions(ctrl);
+    let html = `<option value="">Disabled</option>`;
+    let hasSelected = selectedValue === "";
+    for (const opt of options) {
+        const isSelected = opt.value === selectedValue;
+        if (isSelected) hasSelected = true;
+        html += `<option value="${escapeHtml(opt.value)}" ${isSelected ? "selected" : ""}>${escapeHtml(opt.label)}</option>`;
+    }
+    if (!hasSelected && selectedValue) {
+        html += `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)} (missing)</option>`;
+    }
+    return html;
+}
+
+let ctrlMap = loadCtrlMap();
 
 function alarmKey(a) {
     const src = String(a?.src || "");
@@ -416,6 +507,32 @@ function vmotAckText(txt) {
     if (out) out.textContent = txt;
 }
 
+function stroboAckText(state) {
+    if (stroboCmdBusy) return "STROBO...";
+    if (state?.pending) return "STROBO WAIT";
+    if (state?.on === 1 || state?.on === "1") return "STROBO ON";
+    if (state?.on === 0 || state?.on === "0") return "STROBO OFF";
+    return "STROBO -";
+}
+
+function renderStroboButton(state) {
+    const btn = document.getElementById("btn_strobo");
+    if (!btn) return;
+
+    const strobo = state?.strobo || {};
+    const isOn = strobo.on === 1 || strobo.on === "1";
+    const isPending = stroboCmdBusy || !!strobo.pending;
+    btn.textContent = stroboAckText(strobo);
+    btn.disabled = isPending;
+    btn.classList.toggle("active", isOn);
+    btn.classList.toggle("busy", isPending);
+
+    const meta = [];
+    if (strobo.last_ack?.text) meta.push(String(strobo.last_ack.text));
+    if (strobo.last_error) meta.push(String(strobo.last_error));
+    btn.title = meta.join(" | ") || `Master pod ${isOn ? "strobo attiva" : "strobo disattiva"}`;
+}
+
 function vmotEnableUi(progress, text = null) {
     const btn = document.getElementById("vmot_enable_hold");
     const fill = document.getElementById("vmot_enable_fill");
@@ -491,6 +608,34 @@ async function sendVmotMaster(enable) {
         return false;
     } finally {
         vmotSetBusy(false);
+    }
+}
+
+async function sendStrobo(enable) {
+    if (stroboCmdBusy) return false;
+    stroboCmdBusy = true;
+    renderStroboButton(snapshot);
+    try {
+        const on = Number(enable) === 1 ? 1 : 0;
+        const r = await fetch("/api/cmd/strobo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ on }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j?.ok) return false;
+
+        const ack = await waitCmdAck(j.cmd_id, STROBO_ACK_TIMEOUT_MS).catch(() => null);
+        if (!ack) return false;
+
+        await refreshSnapshotOnce().catch(() => { });
+        return Number(ack.ok) === 1;
+    } catch {
+        return false;
+    } finally {
+        await refreshSnapshotOnce().catch(() => { });
+        stroboCmdBusy = false;
+        renderStroboButton(snapshot);
     }
 }
 
@@ -571,6 +716,20 @@ function setupVmotControls() {
     }
 
     vmotEnableUi(0);
+}
+
+function setupStroboControls() {
+    const btn = document.getElementById("btn_strobo");
+    if (!btn) return;
+    if (!btn.dataset.wired) {
+        btn.dataset.wired = "1";
+        btn.addEventListener("click", async () => {
+            const current = snapshot?.strobo?.on;
+            const next = (current === 1 || current === "1") ? 0 : 1;
+            await sendStrobo(next);
+        });
+    }
+    renderStroboButton(snapshot);
 }
 
 function resolveAlarmGuide(alarm) {
@@ -1581,6 +1740,7 @@ function render(state) {
     if (ms) ms.innerHTML = scadaSvg(state);
     renderVmotState(state);
     renderVmotCockpitWarning(state);
+    renderStroboButton(state);
 
     const ar = document.getElementById("att_readout");
     if (ar) {
@@ -1621,6 +1781,10 @@ function render(state) {
     highlightGpLightChannel();
     syncSonarRuntimeStatus();
     renderControllerStatus(state);
+    const activeId = document.activeElement?.id || "";
+    if (setupWired && uiPrefs.mainTab === "setup" && !activeId.startsWith("setup_gp_") && activeId !== "setup_input_source") {
+        syncInputMappingControls();
+    }
     renderDiagnostics(state);
 }
 
@@ -1638,6 +1802,7 @@ async function init() {
     video.setupVideo();
     ensureAlarmAudioUnlock();
     setupVmotControls();
+    setupStroboControls();
     setupHelpPanel();
     setupAlarmPanelControls();
     renderWidgetsMenu();
@@ -1807,6 +1972,7 @@ uiPrefs.showLightsAck ??= true;
 uiPrefs.showAlarmBeep ??= true;
 uiPrefs.alarmFilter ??= "all";
 uiPrefs.alarmHistoryCollapsed ??= true;
+uiPrefs.inputSource ??= INPUT_SOURCE_BROKER;
 uiPrefs.gamepadIndex ??= -1;
 uiPrefs.sonarHeadingLock ??= false;
 uiPrefs.collapsed.alarms ??= true;
@@ -2233,16 +2399,16 @@ function renderMainMission() {
 }
 
 function setupTabs() {
-    document.querySelectorAll('.tab').forEach(t => {
+    document.querySelectorAll('.tab[data-tab]').forEach(t => {
         t.addEventListener('click', () => {
-            document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+            document.querySelectorAll('.tab[data-tab]').forEach(x => x.classList.remove('active'));
             t.classList.add('active');
             uiPrefs.mainTab = t.dataset.tab; saveUiPrefs(uiPrefs);
             renderMainSlot(uiPrefs.mainTab);
         });
     });
     const cur = uiPrefs.mainTab || 'vehicle';
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === cur));
+    document.querySelectorAll('.tab[data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === cur));
     renderMainSlot(cur);
 }
 
@@ -2262,9 +2428,20 @@ function setupSetupTab() {
         gpTable.innerHTML = GP_ACTIONS.map((a) => `
           <div class="setupGpRow">
             <div class="setupGpLabel">${a.label}</div>
-            <select id="setup_gp_${a.key}">${gpSelectOptions(gpMap[a.key])}</select>
+            <select id="setup_gp_${a.key}"></select>
           </div>
         `).join("");
+    }
+
+    const inputSourceSel = document.getElementById("setup_input_source");
+    if (inputSourceSel) {
+        inputSourceSel.addEventListener("change", () => {
+            uiPrefs.inputSource = inputSourceSel.value === INPUT_SOURCE_BROWSER ? INPUT_SOURCE_BROWSER : INPUT_SOURCE_BROKER;
+            ctrlPrevSignals = {};
+            ctrlSignalsPrimed = false;
+            saveUiPrefs(uiPrefs);
+            syncInputMappingControls();
+        });
     }
 
     const saveUiBtn = document.getElementById("setup_ui_save");
@@ -2306,32 +2483,56 @@ function setupSetupTab() {
     const saveGpBtn = document.getElementById("setup_gp_save");
     if (saveGpBtn) {
         saveGpBtn.onclick = () => {
-            const map = {};
-            for (const a of GP_ACTIONS) {
-                const sel = document.getElementById(`setup_gp_${a.key}`);
-                const v = Number(sel?.value);
-                map[a.key] = Number.isInteger(v) ? v : a.def;
+            const source = currentInputSource();
+            if (source === INPUT_SOURCE_BROWSER) {
+                const map = {};
+                for (const a of GP_ACTIONS) {
+                    const sel = document.getElementById(`setup_gp_${a.key}`);
+                    const v = Number(sel?.value);
+                    map[a.key] = Number.isInteger(v) ? v : a.def;
+                }
+                const deviceSel = document.getElementById("setup_gp_device");
+                const deviceIdx = Number(deviceSel?.value);
+                saveGpMap(map);
+                uiPrefs.gamepadIndex = Number.isInteger(deviceIdx) ? deviceIdx : -1;
+            } else {
+                const map = {};
+                for (const a of GP_ACTIONS) {
+                    const sel = document.getElementById(`setup_gp_${a.key}`);
+                    map[a.key] = String(sel?.value || "").trim();
+                }
+                saveCtrlMap(map);
+                ctrlPrevSignals = {};
+                ctrlSignalsPrimed = false;
             }
-            const deviceSel = document.getElementById("setup_gp_device");
-            const deviceIdx = Number(deviceSel?.value);
-            saveGpMap(map);
-            uiPrefs.gamepadIndex = Number.isInteger(deviceIdx) ? deviceIdx : -1;
             saveUiPrefs(uiPrefs);
             syncSetupTab();
             const ack = document.getElementById("setup_gp_ack");
-            if (ack) ack.textContent = "Joystick settings saved.";
+            if (ack) ack.textContent = source === INPUT_SOURCE_BROWSER
+                ? "Joystick browser mapping saved."
+                : "Controller broker UDP mapping saved.";
         };
     }
 
     const resetGpBtn = document.getElementById("setup_gp_reset");
     if (resetGpBtn) {
         resetGpBtn.onclick = () => {
-            saveGpMap({ ...GP_DEFAULT_MAP });
-            uiPrefs.gamepadIndex = -1;
+            const source = currentInputSource();
+            if (source === INPUT_SOURCE_BROWSER) {
+                saveGpMap({ ...GP_DEFAULT_MAP });
+                uiPrefs.gamepadIndex = -1;
+            } else {
+                saveCtrlMap({});
+                ctrlPrevSignals = {};
+                ctrlSignalsPrimed = false;
+                cancelGpVmotHold();
+            }
             saveUiPrefs(uiPrefs);
             syncSetupTab();
             const ack = document.getElementById("setup_gp_ack");
-            if (ack) ack.textContent = "Joystick settings reset.";
+            if (ack) ack.textContent = source === INPUT_SOURCE_BROWSER
+                ? "Joystick browser mapping reset."
+                : "Controller broker UDP mapping reset.";
         };
     }
 
@@ -2426,12 +2627,31 @@ function syncSetupTab() {
         if (cb) cb.checked = !!uiPrefs.visible[w.id];
     }
 
+    syncInputMappingControls();
+    syncSonarRuntimeStatus();
+}
+
+function syncInputMappingControls() {
+    const source = currentInputSource();
+    const inputSourceSel = document.getElementById("setup_input_source");
+    if (inputSourceSel) inputSourceSel.value = source;
+
+    const deviceLabel = document.getElementById("setup_gp_device_label");
+    if (deviceLabel) deviceLabel.textContent = source === INPUT_SOURCE_BROWSER ? "Joystick device" : "Broker status";
+
     for (const a of GP_ACTIONS) {
         const sel = document.getElementById(`setup_gp_${a.key}`);
-        if (sel) sel.value = String(gpMap[a.key]);
+        if (!sel) continue;
+        if (source === INPUT_SOURCE_BROWSER) {
+            sel.innerHTML = gpSelectOptions(gpMap[a.key]);
+            sel.value = String(gpMap[a.key]);
+        } else {
+            sel.innerHTML = controllerSelectOptions(ctrlMap[a.key]);
+            sel.value = String(ctrlMap[a.key] || "");
+        }
     }
+
     syncGamepadDeviceControl();
-    syncSonarRuntimeStatus();
 }
 
 function setMainTab(tab) {
@@ -2458,6 +2678,14 @@ function gamepadDeviceOptionsHtml(pads, selectedIndex) {
 function syncGamepadDeviceControl(pads = null) {
     const sel = document.getElementById("setup_gp_device");
     if (!sel) return;
+    if (currentInputSource() !== INPUT_SOURCE_BROWSER) {
+        gpDeviceOptionsSignature = "__broker__";
+        sel.innerHTML = `<option value="-1">Controller broker UDP</option>`;
+        sel.value = "-1";
+        sel.disabled = true;
+        return;
+    }
+    sel.disabled = false;
     const list = Array.isArray(pads) ? pads.filter((x) => !!x) : listConnectedGamepads();
     const signature = list.map((gp) => `${gp.index}:${gp.id}`).join("|");
     const desired = Number.isInteger(uiPrefs.gamepadIndex) ? uiPrefs.gamepadIndex : -1;
@@ -2491,6 +2719,36 @@ function gamepadButtonPressed(buttons, idx) {
 
 function gamepadEdge(buttons, idx) {
     return gamepadButtonPressed(buttons, idx) && !gpPrevButtons[idx];
+}
+
+function controllerSignalValue(path, ctrl = null) {
+    const token = String(path || "").trim();
+    if (!token.includes(".")) return undefined;
+    const [group, key] = token.split(".", 2);
+    const source = ctrl || snapshot?.controller || {};
+    return source?.[group]?.[key];
+}
+
+function controllerSignalActive(path, ctrl = null) {
+    return controllerSignalIsActive(controllerSignalValue(path, ctrl));
+}
+
+function controllerSignalEdge(path, ctrl = null) {
+    const token = String(path || "").trim();
+    if (!token) return false;
+    const active = controllerSignalActive(token, ctrl);
+    return active && !ctrlPrevSignals[token];
+}
+
+function rememberControllerSignals(ctrl = null) {
+    const next = {};
+    const source = ctrl || snapshot?.controller || {};
+    for (const a of GP_ACTIONS) {
+        const token = String(ctrlMap[a.key] || "").trim();
+        if (!token) continue;
+        next[token] = controllerSignalActive(token, source);
+    }
+    ctrlPrevSignals = next;
 }
 
 function setGpLightChannel(ch) {
@@ -2575,15 +2833,13 @@ function cancelGpVmotHold() {
     if (!vmotHoldActive) vmotEnableUi(0);
 }
 
-function updateGpVmotHold(buttons) {
-    const idx = Number(gpMap.vmot_enable_hold);
-    if (!Number.isInteger(idx) || idx < 0 || vmotCmdBusy || vmotHoldActive) {
+function updateMappedVmotHold(active, label = "GP") {
+    if (vmotCmdBusy || vmotHoldActive) {
         cancelGpVmotHold();
         return;
     }
 
-    const pressed = gamepadButtonPressed(buttons, idx);
-    if (!pressed) {
+    if (!active) {
         cancelGpVmotHold();
         return;
     }
@@ -2593,13 +2849,13 @@ function updateGpVmotHold(buttons) {
         gpVmotHoldActive = true;
         gpVmotHoldStartMs = performance.now();
         gpVmotLastBeepSec = -1;
-        vmotEnableUi(0, "ENABLE VMOT GP (3s hold)");
+        vmotEnableUi(0, `ENABLE VMOT ${label} (3s hold)`);
     }
 
     const elapsed = Math.max(0, performance.now() - gpVmotHoldStartMs);
     const progress = Math.min(1, elapsed / VMOT_ENABLE_HOLD_MS);
     const remainSec = Math.max(0, Math.ceil((VMOT_ENABLE_HOLD_MS - elapsed) / 1000));
-    vmotEnableUi(progress, `ENABLE VMOT GP (${remainSec}s)`);
+    vmotEnableUi(progress, `ENABLE VMOT ${label} (${remainSec}s)`);
 
     const sec = Math.floor(elapsed / 1000);
     if (sec > gpVmotLastBeepSec && sec > 0) {
@@ -2615,19 +2871,86 @@ function updateGpVmotHold(buttons) {
     }
 }
 
+function updateGpVmotHold(buttons) {
+    const idx = Number(gpMap.vmot_enable_hold);
+    const pressed = Number.isInteger(idx) && idx >= 0 ? gamepadButtonPressed(buttons, idx) : false;
+    updateMappedVmotHold(pressed, "GP");
+}
+
 function setupJoystickControls() {
     if (gpLoopStarted) return;
     gpLoopStarted = true;
 
     const loop = () => {
         try {
+            const status = document.getElementById("setup_gp_status");
+            const source = currentInputSource();
+            if (source === INPUT_SOURCE_BROKER) {
+                gpPrevButtons = [];
+                const ctrl = snapshot?.controller || {};
+                const online = controllerBool(ctrl.online) && !controllerBool(ctrl?.health?.link_stale);
+                if (!online) {
+                    ctrlPrevSignals = {};
+                    ctrlSignalsPrimed = false;
+                    cancelGpVmotHold();
+                    if (status) {
+                        const udpOk = !!snapshot?.controller_udp?.listener_ok;
+                        status.textContent = udpOk ? "Controller broker UDP: waiting link." : "Controller broker UDP: listener off.";
+                    }
+                    requestAnimationFrame(loop);
+                    return;
+                }
+
+                if (status) {
+                    const activeLink = String(ctrl.active_link || "no_link").toUpperCase();
+                    const fields = controllerSignalOptions(ctrl).length;
+                    status.textContent = `Broker UDP ${activeLink}: seq ${ctrl.seq ?? "-"} | fields: ${fields}`;
+                }
+
+                if (!ctrlSignalsPrimed) {
+                    rememberControllerSignals(ctrl);
+                    ctrlSignalsPrimed = true;
+                    requestAnimationFrame(loop);
+                    return;
+                }
+
+                if (controllerSignalEdge(ctrlMap.tab_prev, ctrl)) cycleMainTab(-1);
+                if (controllerSignalEdge(ctrlMap.tab_next, ctrl)) cycleMainTab(1);
+                if (controllerSignalEdge(ctrlMap.light_ch_prev, ctrl)) setGpLightChannel(gpLightCh - 1);
+                if (controllerSignalEdge(ctrlMap.light_ch_next, ctrl)) setGpLightChannel(gpLightCh + 1);
+                if (controllerSignalEdge(ctrlMap.light_on, ctrl)) gpSendLight("ON");
+                if (controllerSignalEdge(ctrlMap.light_off, ctrl)) gpSendLight("OFF");
+                if (controllerSignalEdge(ctrlMap.strobo_toggle, ctrl)) {
+                    const current = snapshot?.strobo?.on;
+                    const next = (current === 1 || current === "1") ? 0 : 1;
+                    sendStrobo(next);
+                }
+                if (controllerSignalEdge(ctrlMap.vmot_disable, ctrl)) {
+                    cancelGpVmotHold();
+                    cancelVmotHold();
+                    sendVmotMaster(0);
+                }
+                updateMappedVmotHold(controllerSignalActive(ctrlMap.vmot_enable_hold, ctrl), "UDP");
+                if (controllerSignalEdge(ctrlMap.add_mark, ctrl)) gpAddMarkerEvent();
+                if (controllerSignalEdge(ctrlMap.toggle_log, ctrl)) gpToggleLogging();
+                if (controllerSignalEdge(ctrlMap.video_stream_1, ctrl)) video.selectVideoStream(0);
+                if (controllerSignalEdge(ctrlMap.video_stream_2, ctrl)) video.selectVideoStream(1);
+                if (controllerSignalEdge(ctrlMap.video_stream_3, ctrl)) video.selectVideoStream(2);
+                if (controllerSignalEdge(ctrlMap.tab_cycle, ctrl)) cycleMainTab(1);
+
+                rememberControllerSignals(ctrl);
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            ctrlPrevSignals = {};
+            ctrlSignalsPrimed = false;
             const pads = listConnectedGamepads();
             syncGamepadDeviceControl(pads);
             const gp = pickConfiguredGamepad(pads);
             if (!gp) {
                 gpPrevButtons = [];
                 cancelGpVmotHold();
-                const status = document.getElementById("setup_gp_status");
                 const wanted = Number(uiPrefs.gamepadIndex);
                 if (status) {
                     status.textContent = wanted >= 0
@@ -2639,7 +2962,6 @@ function setupJoystickControls() {
             }
 
             const buttons = (gp.buttons || []).map((b) => !!(b && b.pressed));
-            const status = document.getElementById("setup_gp_status");
             if (status) {
                 const mode = Number(uiPrefs.gamepadIndex) >= 0 ? "Selected" : "Auto";
                 status.textContent = `${mode}: #${gp.index} ${gp.id} | buttons: ${buttons.length}`;
@@ -2651,6 +2973,11 @@ function setupJoystickControls() {
             if (gamepadEdge(buttons, gpMap.light_ch_next)) setGpLightChannel(gpLightCh + 1);
             if (gamepadEdge(buttons, gpMap.light_on)) gpSendLight("ON");
             if (gamepadEdge(buttons, gpMap.light_off)) gpSendLight("OFF");
+            if (gamepadEdge(buttons, gpMap.strobo_toggle)) {
+                const current = snapshot?.strobo?.on;
+                const next = (current === 1 || current === "1") ? 0 : 1;
+                sendStrobo(next);
+            }
             if (gamepadEdge(buttons, gpMap.vmot_disable)) {
                 cancelGpVmotHold();
                 cancelVmotHold();

@@ -320,6 +320,32 @@ label {
   background: rgba(45, 107, 255, .16);
 }
 
+.tabAction {
+  min-width: 112px;
+}
+
+.tabStrobo {
+  margin-left: 8px;
+  border-color: rgba(245, 158, 11, .28);
+  background: rgba(245, 158, 11, .08);
+}
+
+.tabStrobo:hover {
+  border-color: rgba(245, 158, 11, .55);
+  background: rgba(245, 158, 11, .14);
+}
+
+.tabStrobo.active {
+  border-color: rgba(239, 68, 68, .65);
+  background: rgba(239, 68, 68, .18);
+  color: #fff3f3;
+}
+
+.tabStrobo.busy {
+  opacity: .72;
+  cursor: wait;
+}
+
 .widgetsMenu {
   justify-self: end;
   position: relative;

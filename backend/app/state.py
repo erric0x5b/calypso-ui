@@ -57,6 +57,16 @@ state.setdefault("mav", {
     "last_heartbeat_ms": 0,
 })
 state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
+state.setdefault("strobo", {
+    "on": None,
+    "dst": "BAT1",
+    "pending": False,
+    "desired_on": None,
+    "last_cmd_id": None,
+    "last_ts_ms": 0,
+    "last_ack": None,
+    "last_error": None,
+})
 state.setdefault("controller", {
     "online": False,
     "last_update_ms": 0,
@@ -281,18 +291,56 @@ def _cmd_state() -> dict:
     return state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
 
 
+def expire_pending_cmds(timeout_ms: int = 5000, now_monotonic_ms: int | None = None) -> None:
+    cmd = _cmd_state()
+    pending = cmd.setdefault("pending", {})
+    now_ms = int(now_monotonic_ms if now_monotonic_ms is not None else time.monotonic() * 1000)
+    expired: list[tuple[str, dict]] = []
+    for sid, sent in list(pending.items()):
+        ts = int(sent.get("sent_monotonic_ms") or 0)
+        if ts <= 0:
+            continue
+        if now_ms - ts < int(timeout_ms):
+            continue
+        expired.append((sid, sent))
+
+    for sid, sent in expired:
+        sent["status"] = "timeout"
+        cmd["last_cmd_result"] = sent
+        if str(sent.get("type") or "").upper() == "STROBO":
+            strobo = state.setdefault("strobo", {})
+            strobo["pending"] = False
+            strobo["last_error"] = "ack timeout"
+        pending.pop(sid, None)
+
+
 def register_cmd(cmd_id: int, cmd_type: str, dst: str, ts_ms: int | None, payload: dict | None = None) -> None:
     cmd = _cmd_state()
     pending = cmd.setdefault("pending", {})
+    cmd_type_norm = str(cmd_type or "").upper()
     sid = str(int(cmd_id) & 0xFFFFFFFF)
     pending[sid] = {
         "cmd_id": int(cmd_id) & 0xFFFFFFFF,
-        "type": str(cmd_type or ""),
+        "type": cmd_type_norm,
         "dst": str(dst or ""),
         "ts_ms": int(ts_ms or 0),
+        "sent_monotonic_ms": int(time.monotonic() * 1000),
         "payload": payload or {},
         "status": "sent",
     }
+    if cmd_type_norm == "STROBO":
+        strobo = state.setdefault("strobo", {})
+        desired_on = payload.get("on") if isinstance(payload, dict) else None
+        try:
+            desired_on = int(desired_on)
+        except Exception:
+            desired_on = None
+        strobo["dst"] = str(dst or "BAT1")
+        strobo["pending"] = True
+        strobo["desired_on"] = desired_on
+        strobo["last_cmd_id"] = int(cmd_id) & 0xFFFFFFFF
+        strobo["last_ts_ms"] = int(ts_ms or 0)
+        strobo["last_error"] = None
     while len(pending) > 128:
         pending.pop(next(iter(pending)))
 
@@ -322,11 +370,28 @@ def record_ack(ts_ms: int, src: str, cmd_id: int, ok: int, err: int | None = Non
         sent["status"] = "ack"
         sent["ack"] = ack
         cmd["last_cmd_result"] = sent
+        if str(sent.get("type") or "").upper() == "STROBO":
+            strobo = state.setdefault("strobo", {})
+            strobo["pending"] = False
+            strobo["last_ack"] = ack
+            strobo["last_cmd_id"] = ack["cmd_id"]
+            strobo["last_ts_ms"] = ack["ts_ms"]
+            if ack["ok"] == 1:
+                desired_on = sent.get("payload", {}).get("on")
+                try:
+                    strobo["on"] = int(desired_on)
+                except Exception:
+                    pass
+                strobo["desired_on"] = strobo.get("on")
+                strobo["last_error"] = None
+            else:
+                strobo["last_error"] = ack.get("text") or ack.get("err")
         pending.pop(sid, None)
     return ack
 
 
 def get_cmd_ack_status(cmd_id: int) -> dict:
+    expire_pending_cmds()
     cmd = _cmd_state()
     sid = str(int(cmd_id) & 0xFFFFFFFF)
     pending = cmd.get("pending", {})

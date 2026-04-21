@@ -60,6 +60,7 @@ next_alm = time.time()
 seq_pwr = 0
 vmot_lock = threading.Lock()
 vmot_on = [1, 1, 0, 1, 0, 0]  # VMOT1..VMOT6
+strobe_on = 0
 alarm_active = {}
 
 def ts_ms():
@@ -140,6 +141,7 @@ def parse_line(line: str):
     return payload.split(",")
 
 def cmd_listener():
+    global strobe_on
     rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     rx.bind(("0.0.0.0", CMD_LISTEN_PORT))
     while True:
@@ -173,6 +175,10 @@ def cmd_listener():
                 for i in range(6):
                     vmot_on[i] = enable
             text = f"VMOT_{'ON' if enable else 'OFF'}"
+        elif cmd_type == "STROBO":
+            tok = str(kv.get("On", kv.get("Enable", kv.get("Val", "0")))).strip().lower()
+            strobe_on = 1 if tok in ("1", "true", "on", "enable", "enabled") else 0
+            text = f"STROBO_{'ON' if strobe_on else 'OFF'}"
 
         ack = f"{dst},{src},ACK,2,{seq},{ts_ms},CmdId,{cmd_id},Ok,{ok}"
         if text:
