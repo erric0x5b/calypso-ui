@@ -94,10 +94,12 @@ def normalize_cfg(raw: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 def _cksum(data: bytes) -> int:
+    # checksum = somma bytes (mod 65536) come da Ping Protocol
     return sum(data) & 0xFFFF
 
 def build_ping_frame(msg_id: int, src: int, dst: int, payload: bytes) -> bytes:
-    # Ping Protocol frame: "BR" + len(u16) + msg_id(u16) + src(u8) + dst(u8) + payload + checksum(u16)
+    # Frame base: "BR" + len(u16) + msg_id(u16) + src(u8) + dst(u8) + payload + checksum(u16)
+    # NOTA: il ping protocol usa campi definiti; questo frame è compatibile col pattern BR + ... + checksum  [oai_citation:4‡docs.bluerobotics.com](https://docs.bluerobotics.com/ping-protocol)
     header = b"BR"
     plen = len(payload)
     body = struct.pack("<H", plen) + struct.pack("<H", msg_id) + struct.pack("<B", src) + struct.pack("<B", dst) + payload
@@ -228,6 +230,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
     host = (cfg.get("host") or "blueos").strip()
     fallback_ip = (cfg.get("fallback_ip") or "192.168.2.2").strip()
     port = int(cfg.get("port") or 9092)
+    addr: Tuple[str, int]
 
     runtime = state.setdefault("sonar", {}).setdefault("ping360", {})
     runtime.update({
@@ -248,7 +251,6 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
         return
 
     # resolve host (fallback ip)
-    addr = None
     try:
         addr = (socket.gethostbyname(host), port)
     except Exception:
@@ -256,72 +258,86 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
-    loop = asyncio.get_running_loop()
+    sock.bind(("0.0.0.0", 0))
 
     buf = bytearray()
+    loop = asyncio.get_running_loop()
+    auto_frame = build_auto_transmit_frame(cfg)
+    motor_off_frame = build_motor_off_frame(cfg)
+    last_cmd_monotonic = 0.0
+    last_rx_monotonic = 0.0
+
+    runtime["remote_ip"] = addr[0]
+    runtime["bind_port"] = sock.getsockname()[1]
+    runtime["last_rx_ms"] = 0
+    runtime["last_tx_ms"] = 0
+    state.setdefault("counters", {}).setdefault("ping360_rx", 0)
+
+    while not stop_evt.is_set():
+        try:
+            now = time.monotonic()
+            if now - last_cmd_monotonic >= (1.0 if last_rx_monotonic == 0.0 else 5.0):
+                await loop.sock_sendto(sock, auto_frame, addr)
+                runtime["tx_total"] = int(runtime.get("tx_total", 0)) + 1
+                runtime["last_cmd_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
+                runtime["last_tx_ms"] = runtime["last_cmd_ms"]
+                runtime["scanning"] = True
+                last_cmd_monotonic = now
+
+            data, peer = await asyncio.wait_for(loop.sock_recvfrom(sock, 65536), timeout=1.0)
+            if peer[0] != addr[0]:
+                continue
+
+            if not data:
+                continue
+
+            runtime["connected"] = True
+            last_rx_monotonic = time.monotonic()
+            buf.extend(data)
+            frames = parse_frames(buf)
+            for (msg_id, src, dst, payload) in frames:
+                state["counters"]["ping360_rx"] += 1
+                runtime["last_rx_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
+                runtime["last_rx_monotonic_ms"] = int(time.monotonic() * 1000)
+
+                # 2301 auto_device_data  [oai_citation:6‡docs.bluerobotics.com](https://docs.bluerobotics.com/ping-protocol/pingmessage-ping360/)
+                if msg_id == 2301:
+                    dd = decode_ping360_auto_device_data(payload)
+                    if not dd.get("ok"):
+                        runtime["last_err"] = dd.get("err") or "decode failed"
+                        continue
+                    runtime["last"] = dd
+                    runtime["range_m"] = round(estimate_range_m(dd.get("sample_period_25ns"), dd.get("num_samples")), 1)
+                    runtime["rx_total"] = int(runtime.get("rx_total", 0)) + 1
+                    # Keep a stable UI contract: kind=ping360 with normalized fields.
+                    await ws_broadcast({
+                        "type": "sonar",
+                        "kind": "ping360",
+                        "ts_ms": runtime["last_rx_ms"],
+                        "angle_grad": dd.get("angle_grad", 0),
+                        "angle_deg": float(dd.get("angle_grad", 0)) * 0.9,
+                        "range_m": runtime["range_m"],
+                        "samples": dd.get("data", []),
+                        "payload": dd,
+                    })
+        except asyncio.TimeoutError:
+            if last_rx_monotonic and (time.monotonic() - last_rx_monotonic) > 5.0:
+                runtime["connected"] = False
+                runtime["scanning"] = False
+        except (BlockingIOError, InterruptedError):
+            await asyncio.sleep(0.01)
+        except (ConnectionResetError, OSError) as e:
+            runtime["last_err"] = str(e)
+            runtime["connected"] = False
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            runtime["last_err"] = str(e)
+            await asyncio.sleep(0.1)
 
     try:
-        sock.connect(addr)
-        runtime["connected"] = True
-        runtime["remote_ip"] = addr[0]
-        runtime["last_rx_ms"] = 0
-        runtime["last_tx_ms"] = 0
-        state.setdefault("counters", {}).setdefault("ping360_rx", 0)
-
-        await loop.sock_sendall(sock, build_auto_transmit_frame(cfg))
-        runtime["tx_total"] = int(runtime.get("tx_total", 0)) + 1
-        runtime["last_tx_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
-        runtime["scanning"] = True
-
-        while not stop_evt.is_set():
-            try:
-                try:
-                    data = await asyncio.wait_for(loop.sock_recv(sock, 65536), timeout=1.0)
-                except asyncio.TimeoutError:
-                    continue
-                if not data:
-                    await asyncio.sleep(0.01)
-                    continue
-                buf.extend(data)
-                frames = parse_frames(buf)
-                for (msg_id, src, dst, payload) in frames:
-                    state["counters"]["ping360_rx"] += 1
-                    runtime["last_rx_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
-                    runtime["last_rx_monotonic_ms"] = int(time.monotonic() * 1000)
-
-                    if msg_id == 2301:
-                        dd = decode_ping360_auto_device_data(payload)
-                        if not dd.get("ok"):
-                            runtime["last_err"] = dd.get("err") or "decode failed"
-                            continue
-                        runtime["last"] = dd
-                        runtime["rx_total"] = int(runtime.get("rx_total", 0)) + 1
-                        await ws_broadcast({
-                            "type": "sonar",
-                            "kind": "ping360",
-                            "ts_ms": runtime["last_rx_ms"],
-                            "angle_grad": dd.get("angle_grad", 0),
-                            "angle_deg": float(dd.get("angle_grad", 0)) * 0.9,
-                            "range_m": round(estimate_range_m(dd.get("sample_period_25ns"), dd.get("num_samples")), 1),
-                            "samples": dd.get("data", []),
-                            "payload": dd,
-                        })
-            except (BlockingIOError, InterruptedError):
-                await asyncio.sleep(0.01)
-            except (ConnectionResetError, OSError) as e:
-                runtime["last_err"] = str(e)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                runtime["last_err"] = str(e)
-                await asyncio.sleep(0.1)
-    except Exception as e:
-        runtime["last_err"] = str(e)
-    finally:
-        try:
-            sock.send(build_motor_off_frame(cfg))
-        except Exception:
-            pass
-        sock.close()
-
+        await loop.sock_sendto(sock, motor_off_frame, addr)
+    except Exception:
+        pass
+    sock.close()
     runtime["connected"] = False
     runtime["scanning"] = False
