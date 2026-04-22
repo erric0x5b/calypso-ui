@@ -62,6 +62,14 @@ const SONAR_CFG_FIELDS = [
     "num_steps",
     "delay_ms",
 ];
+const SONAR_RANGE_PRESETS = [5, 10, 15, 30, 60];
+const SONAR_SCAN_PRESETS = [90, 130, 180, 360];
+const SONAR_RESOLUTION_PRESETS = {
+    low: { num_samples: 400, num_steps: 3, label: "LOW" },
+    med: { num_samples: 800, num_steps: 2, label: "MED" },
+    high: { num_samples: 1200, num_steps: 1, label: "HIGH" },
+};
+const SONAR_PALETTE_PRESETS = ["jet", "parula", "copper", "bw"];
 
 const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "diagnostics", "setup"];
 const GP_ACTIONS = [
@@ -1975,6 +1983,7 @@ uiPrefs.alarmHistoryCollapsed ??= true;
 uiPrefs.inputSource ??= INPUT_SOURCE_BROKER;
 uiPrefs.gamepadIndex ??= -1;
 uiPrefs.sonarHeadingLock ??= false;
+uiPrefs.sonarPalette ??= "jet";
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.controller ??= false;
@@ -2073,6 +2082,52 @@ function sonarField(id) {
     return document.getElementById(`sonar_cfg_${id}`);
 }
 
+function sonarSectorConfig(deg) {
+    const sector = Number(deg);
+    if (!Number.isFinite(sector) || sector >= 360) {
+        return { start_angle_grad: 0, stop_angle_grad: 399 };
+    }
+    const halfGrad = Math.round((sector / 0.9) / 2);
+    return {
+        start_angle_grad: ((400 - halfGrad) % 400),
+        stop_angle_grad: halfGrad % 400,
+    };
+}
+
+function sonarSectorPresetValue(cfg) {
+    const start = Number(cfg?.start_angle_grad);
+    const stop = Number(cfg?.stop_angle_grad);
+    if (!Number.isFinite(start) || !Number.isFinite(stop)) return null;
+    for (const deg of SONAR_SCAN_PRESETS) {
+        const sector = sonarSectorConfig(deg);
+        if (sector.start_angle_grad === start && sector.stop_angle_grad === stop) return deg;
+    }
+    return null;
+}
+
+function sonarResolutionPresetValue(cfg) {
+    const samples = Number(cfg?.num_samples);
+    const steps = Number(cfg?.num_steps);
+    for (const [key, preset] of Object.entries(SONAR_RESOLUTION_PRESETS)) {
+        if (samples === preset.num_samples && steps === preset.num_steps) return key;
+    }
+    return null;
+}
+
+function sonarPalettePresetValue(value) {
+    const palette = String(value || "").toLowerCase();
+    return SONAR_PALETTE_PRESETS.includes(palette) ? palette : "jet";
+}
+
+function setActivePreset(containerId, attrName, activeValue) {
+    const root = document.getElementById(containerId);
+    if (!root) return;
+    const activeText = activeValue == null ? "" : String(activeValue);
+    for (const btn of root.querySelectorAll("button")) {
+        btn.classList.toggle("active", String(btn.dataset[attrName] || "") === activeText);
+    }
+}
+
 function writeSonarSetupConfig(cfg) {
     sonarCfg = cfg || {};
     const enabled = sonarField("enabled");
@@ -2083,11 +2138,11 @@ function writeSonarSetupConfig(cfg) {
         const v = sonarCfg[id];
         node.value = v == null ? "" : String(v);
     }
-    const quickRange = document.getElementById("sonar_range_m");
-    if (quickRange && document.activeElement !== quickRange) {
-        const range = Number(sonarCfg.range_m);
-        quickRange.value = Number.isFinite(range) ? String(Math.round(range)) : "";
-    }
+    const range = Number(sonarCfg.range_m);
+    setActivePreset("sonar_range_presets", "rangeM", Number.isFinite(range) ? Math.round(range) : null);
+    setActivePreset("sonar_scan_presets", "sectorDeg", sonarSectorPresetValue(sonarCfg));
+    setActivePreset("sonar_resolution_presets", "resolution", sonarResolutionPresetValue(sonarCfg));
+    setActivePreset("sonar_palette_presets", "palette", sonarPalettePresetValue(uiPrefs.sonarPalette));
     syncSonarRuntimeStatus();
 }
 
@@ -2102,9 +2157,9 @@ function readSonarSetupConfig() {
     const current = sonarCfg || {};
     return {
         enabled: !!enabled?.checked,
-        host: String(sonarField("host")?.value || current.host || "blueos").trim(),
-        fallback_ip: String(sonarField("fallback_ip")?.value || current.fallback_ip || "192.168.2.2").trim(),
-        port: numberFieldValue("port", current.port ?? 9092),
+        host: String(sonarField("host")?.value || current.host || "192.168.2.11").trim(),
+        fallback_ip: String(sonarField("fallback_ip")?.value || current.fallback_ip || "192.168.2.11").trim(),
+        port: numberFieldValue("port", current.port ?? 12345),
         device_id: numberFieldValue("device_id", current.device_id ?? 1),
         gain_setting: numberFieldValue("gain_setting", current.gain_setting ?? 1),
         transmit_duration_us: numberFieldValue("transmit_duration_us", current.transmit_duration_us ?? 500),
@@ -2117,14 +2172,6 @@ function readSonarSetupConfig() {
         num_steps: numberFieldValue("num_steps", current.num_steps ?? 1),
         delay_ms: numberFieldValue("delay_ms", current.delay_ms ?? 0),
     };
-}
-
-function sonarQuickRangeValue() {
-    const quick = document.getElementById("sonar_range_m");
-    const v = Number(quick?.value);
-    if (Number.isFinite(v)) return v;
-    const cfgRange = Number(sonarCfg?.range_m);
-    return Number.isFinite(cfgRange) ? cfgRange : 60;
 }
 
 async function loadSonarSetupConfig(publishAck = false) {
@@ -2154,9 +2201,10 @@ async function saveSonarSetupConfig() {
 async function startSonarScan() {
     try {
         setSonarSetupAck("Starting Ping360...");
-        const payload = { ...(sonarCfg || readSonarSetupConfig()), range_m: sonarQuickRangeValue() };
+        const payload = { ...(sonarCfg || readSonarSetupConfig()) };
         const j = await logs.apiPost("/api/sonar/ping360/start", payload);
         writeSonarSetupConfig(j?.config || payload);
+        clearSonarDisplay();
         await refreshSnapshotOnce().catch(() => { });
     } catch (e) {
         setSonarSetupAck(e?.message || "Errore start Ping360.");
@@ -2168,22 +2216,55 @@ async function stopSonarScan() {
         setSonarSetupAck("Stopping Ping360...");
         const j = await logs.apiPost("/api/sonar/ping360/stop", {});
         writeSonarSetupConfig(j?.config || { ...(sonarCfg || {}), enabled: false });
+        clearSonarDisplay();
         await refreshSnapshotOnce().catch(() => { });
     } catch (e) {
         setSonarSetupAck(e?.message || "Errore stop Ping360.");
     }
 }
 
-async function applySonarRange() {
+async function applySonarConfigPatch(patch, successText, pendingText = "Updating Ping360...") {
     try {
-        const payload = { ...(sonarCfg || readSonarSetupConfig()), range_m: sonarQuickRangeValue() };
+        setSonarSetupAck(pendingText);
+        const payload = { ...(sonarCfg || readSonarSetupConfig()), ...(patch || {}) };
         const j = await logs.apiPost("/api/sonar/ping360/config", payload);
         writeSonarSetupConfig(j?.config || payload);
-        setSonarSetupAck("Ping360 range saved. Runtime restarted.");
+        clearSonarDisplay();
+        setSonarSetupAck(successText);
         await refreshSnapshotOnce().catch(() => { });
     } catch (e) {
-        setSonarSetupAck(e?.message || "Errore range Ping360.");
+        setSonarSetupAck(e?.message || "Errore configurazione Ping360.");
     }
+}
+
+async function applySonarRangePreset(rangeM) {
+    await applySonarConfigPatch({ range_m: Number(rangeM) }, `Ping360 range ${rangeM} m saved. Runtime restarted.`, `Setting Ping360 range ${rangeM} m...`);
+}
+
+async function applySonarSectorPreset(sectorDeg) {
+    const sector = sonarSectorConfig(sectorDeg);
+    await applySonarConfigPatch(sector, `Ping360 scan sector ${sectorDeg} deg saved. Runtime restarted.`, `Setting Ping360 scan sector ${sectorDeg} deg...`);
+}
+
+async function applySonarResolutionPreset(key) {
+    const preset = SONAR_RESOLUTION_PRESETS[key];
+    if (!preset) return;
+    await applySonarConfigPatch(
+        { num_samples: preset.num_samples, num_steps: preset.num_steps },
+        `Ping360 resolution ${preset.label} saved. Runtime restarted.`,
+        `Setting Ping360 resolution ${preset.label}...`
+    );
+}
+
+function clearSonarDisplay() {
+    if (window.sonarPing360?.clear) window.sonarPing360.clear();
+}
+
+function applySonarPalettePreset(palette) {
+    uiPrefs.sonarPalette = sonarPalettePresetValue(palette);
+    saveUiPrefs(uiPrefs);
+    setActivePreset("sonar_palette_presets", "palette", uiPrefs.sonarPalette);
+    syncSonarRuntimeStatus();
 }
 
 function syncSonarRuntimeStatus() {
@@ -2202,16 +2283,21 @@ function syncSonarRuntimeStatus() {
     if (cfgStatus && snapshot?.sonar?.ping360) {
         const err = rt.last_err ? ` err=${rt.last_err}` : "";
         const rx = Number(rt.rx_total || snapshot?.counters?.ping360_rx || 0);
-        cfgStatus.textContent = `host=${rt.host || "-"}:${rt.port || "-"} rx=${rx} tx=${rt.tx_total || 0}${err}`;
+        const bind = rt.bind_port ? ` bind=${rt.bind_port}` : "";
+        const peer = rt.last_peer ? ` peer=${rt.last_peer}` : "";
+        const msg = rt.last_msg_id ? ` msg=${rt.last_msg_id}` : "";
+        const ver = rt.protocol_version ? ` proto=${rt.protocol_version}` : "";
+        const scanMode = rt.scan_mode ? ` mode=${rt.scan_mode}` : "";
+        cfgStatus.textContent = `host=${rt.host || "-"}:${rt.port || "-"} rx=${rx} tx=${rt.tx_total || 0}${scanMode}${bind}${peer}${msg}${ver}${err}`;
     }
 
     const range = Number(rt.range_m ?? sonarCfg?.range_m);
     const rangeLabel = document.getElementById("sonar_range_label");
     if (rangeLabel) rangeLabel.textContent = Number.isFinite(range) ? `range: ${range.toFixed(0)} m` : "range: -";
-    const rangeInput = document.getElementById("sonar_range_m");
-    if (rangeInput && document.activeElement !== rangeInput && Number.isFinite(range)) {
-        rangeInput.value = String(Math.round(range));
-    }
+    setActivePreset("sonar_range_presets", "rangeM", Number.isFinite(range) ? Math.round(range) : null);
+    setActivePreset("sonar_scan_presets", "sectorDeg", sonarSectorPresetValue(sonarCfg));
+    setActivePreset("sonar_resolution_presets", "resolution", sonarResolutionPresetValue(sonarCfg));
+    setActivePreset("sonar_palette_presets", "palette", sonarPalettePresetValue(uiPrefs.sonarPalette));
 
     const headingLock = document.getElementById("sonar_heading_lock");
     if (headingLock) headingLock.checked = !!uiPrefs.sonarHeadingLock;
@@ -2221,6 +2307,9 @@ function syncSonarRuntimeStatus() {
             headingLock: !!uiPrefs.sonarHeadingLock,
             headingDeg: Number.isFinite(heading) ? heading : 0,
             rangeM: Number.isFinite(range) ? range : Number(sonarCfg?.range_m || 60),
+            palette: sonarPalettePresetValue(uiPrefs.sonarPalette),
+            sectorStartGrad: Number(sonarCfg?.start_angle_grad ?? 0),
+            sectorStopGrad: Number(sonarCfg?.stop_angle_grad ?? 399),
         });
     }
 }
@@ -2573,9 +2662,25 @@ function setupSetupTab() {
         sonarStopBtn.onclick = () => stopSonarScan();
     }
 
-    const sonarRangeBtn = document.getElementById("sonar_range_apply");
-    if (sonarRangeBtn) {
-        sonarRangeBtn.onclick = () => applySonarRange();
+    const sonarClearBtn = document.getElementById("sonar_clear");
+    if (sonarClearBtn) {
+        sonarClearBtn.onclick = () => clearSonarDisplay();
+    }
+
+    for (const btn of document.querySelectorAll("#sonar_range_presets button[data-range-m]")) {
+        btn.onclick = () => applySonarRangePreset(Number(btn.dataset.rangeM || 0));
+    }
+
+    for (const btn of document.querySelectorAll("#sonar_scan_presets button[data-sector-deg]")) {
+        btn.onclick = () => applySonarSectorPreset(Number(btn.dataset.sectorDeg || 0));
+    }
+
+    for (const btn of document.querySelectorAll("#sonar_resolution_presets button[data-resolution]")) {
+        btn.onclick = () => applySonarResolutionPreset(String(btn.dataset.resolution || ""));
+    }
+
+    for (const btn of document.querySelectorAll("#sonar_palette_presets button[data-palette]")) {
+        btn.onclick = () => applySonarPalettePreset(String(btn.dataset.palette || ""));
     }
 
     const sonarHeadingLock = document.getElementById("sonar_heading_lock");

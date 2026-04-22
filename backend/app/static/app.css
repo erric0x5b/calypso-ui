@@ -1458,6 +1458,40 @@ svg.thRing {
   width: 76px;
 }
 
+.sonarQuickGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sonarQuickLabel {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.sonarPresetGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sonarPresetGroup > button {
+  min-width: 46px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .08);
+  color: var(--text);
+}
+
+.sonarPresetGroup > button.active {
+  background: rgba(45, 107, 255, .2);
+  border-color: rgba(45, 107, 255, .55);
+  color: #d7e6ff;
+}
+
 .sonarHeadingLock {
   margin-left: auto;
 }
@@ -1466,6 +1500,13 @@ svg.thRing {
   background: #050914;
   border: 1px solid rgba(255, 255, 255, .08);
   border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .sonarHeadingLock {
+    margin-left: 0;
+    width: 100%;
+  }
 }
 
 @media (max-width: 1100px) {

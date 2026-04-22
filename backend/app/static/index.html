@@ -169,16 +169,45 @@
           <div class="cardBody">
             <div class="sonarToolbar">
               <span class="pill" id="sonar_status">PING360 WAIT</span>
-              <span class="mono" id="sonar_last_angle">angle: -</span>
-              <span class="mono" id="sonar_last_samples">samples: -</span>
-              <span class="mono" id="sonar_range_label">range: -</span>
               <button id="sonar_start">START</button>
               <button id="sonar_stop">STOP</button>
-              <label class="sonarRangeControl">
-                <span>Range m</span>
-                <input id="sonar_range_m" type="number" min="1" max="100" step="1" />
-              </label>
-              <button id="sonar_range_apply">APPLY RANGE</button>
+              <button id="sonar_clear">CLEAR</button>
+              <div class="sonarQuickGroup">
+                <span class="sonarQuickLabel">Scan</span>
+                <div class="sonarPresetGroup" id="sonar_scan_presets">
+                  <button type="button" data-sector-deg="90">90</button>
+                  <button type="button" data-sector-deg="130">130</button>
+                  <button type="button" data-sector-deg="180">180</button>
+                  <button type="button" data-sector-deg="360">360</button>
+                </div>
+              </div>
+              <div class="sonarQuickGroup">
+                <span class="sonarQuickLabel">Range</span>
+                <div class="sonarPresetGroup" id="sonar_range_presets">
+                  <button type="button" data-range-m="5">5</button>
+                  <button type="button" data-range-m="10">10</button>
+                  <button type="button" data-range-m="15">15</button>
+                  <button type="button" data-range-m="30">30</button>
+                  <button type="button" data-range-m="60">60</button>
+                </div>
+              </div>
+              <div class="sonarQuickGroup">
+                <span class="sonarQuickLabel">Resolution</span>
+                <div class="sonarPresetGroup" id="sonar_resolution_presets">
+                  <button type="button" data-resolution="low">LOW</button>
+                  <button type="button" data-resolution="med">MED</button>
+                  <button type="button" data-resolution="high">HIGH</button>
+                </div>
+              </div>
+              <div class="sonarQuickGroup">
+                <span class="sonarQuickLabel">Palette</span>
+                <div class="sonarPresetGroup" id="sonar_palette_presets">
+                  <button type="button" data-palette="jet">JET</button>
+                  <button type="button" data-palette="parula">PARULA</button>
+                  <button type="button" data-palette="copper">COPPER</button>
+                  <button type="button" data-palette="bw">B/W</button>
+                </div>
+              </div>
               <label class="setupCheck sonarHeadingLock">
                 <input type="checkbox" id="sonar_heading_lock">
                 Heading lock
@@ -286,11 +315,11 @@
                 <div class="sonarCfgGrid">
                   <label class="setupField">
                     <span>Host</span>
-                    <input id="sonar_cfg_host" type="text" placeholder="blueos" />
+                    <input id="sonar_cfg_host" type="text" placeholder="192.168.2.11" />
                   </label>
                   <label class="setupField">
                     <span>Fallback IP</span>
-                    <input id="sonar_cfg_fallback_ip" type="text" placeholder="192.168.2.2" />
+                    <input id="sonar_cfg_fallback_ip" type="text" placeholder="192.168.2.11" />
                   </label>
                   <label class="setupField">
                     <span>Port</span>
