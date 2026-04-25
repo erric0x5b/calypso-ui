@@ -4,14 +4,12 @@
   "fallback_ip": "192.168.2.11",
   "port": 12345,
   "device_id": 1,
-
   "gain_setting": 1,
   "transmit_duration_us": 500,
   "sample_period_25ns": 4000,
   "frequency_khz": 750,
   "num_samples": 800,
   "range_m": 60.0,
-
   "start_angle_grad": 0,
   "stop_angle_grad": 399,
   "num_steps": 1,

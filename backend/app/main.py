@@ -601,9 +601,41 @@ def record_pod_heartbeat_tx(pod: str, ts: int, line: str, targets: list[str] | N
     ) or None
 
 
+def shutdown_state() -> dict:
+    return state.setdefault("system", {}).setdefault("shutdown", {
+        "in_progress": False,
+        "requested_ts_ms": 0,
+        "requested_by": None,
+        "cmd_id": None,
+        "dst": "BAT1",
+        "host": None,
+        "last_error": None,
+    })
+
+
+def shutdown_in_progress() -> bool:
+    return bool(shutdown_state().get("in_progress"))
+
+
+def reject_if_shutdown_in_progress(allowed_cmd: str | None = None):
+    shdn = shutdown_state()
+    if not shdn.get("in_progress"):
+        return None
+    if str(allowed_cmd or "").strip().upper() == "SHDN":
+        return None
+    return JSONResponse({
+        "ok": False,
+        "err": "shutdown in progress",
+        "shutdown": shdn,
+    }, status_code=409)
+
+
 async def pods_heartbeat_task():
     period_s = 1.0 / PODS_HEARTBEAT_HZ
     while True:
+        if shutdown_in_progress():
+            await asyncio.sleep(period_s)
+            continue
         ts = now_ms()
         seq = next_tx_seq("HB")
         hb = state.setdefault("sfc_heartbeat", {})
@@ -1302,6 +1334,9 @@ def api_health():
 
 @app.post("/api/cmd/lights_channel")
 async def cmd_lights_channel(body: dict = Body(...)):
+    blocked = reject_if_shutdown_in_progress()
+    if blocked is not None:
+        return blocked
     ch = int(body.get("ch", 1))
     mode = str(body.get("mode", "ON")).upper()
     dim = int(body.get("dim", 0))
@@ -1345,6 +1380,9 @@ async def cmd_lights_channel(body: dict = Body(...)):
 
 @app.post("/api/cmd/lights_ids")
 async def cmd_lights_ids(body: Optional[dict] = Body(None)):
+    blocked = reject_if_shutdown_in_progress()
+    if blocked is not None:
+        return blocked
     cfg = load_lights_cfg()
     if body and isinstance(body, dict) and isinstance(body.get("pods"), dict):
         cfg = normalize_lights_cfg({"version": cfg.get("version", 1), "channels": cfg.get("channels", {}), "pods": body["pods"]})
@@ -1360,6 +1398,9 @@ async def cmd_lights_ids(body: Optional[dict] = Body(None)):
 @app.post("/api/cmd/vmot_master")
 @app.post("/api/cmd/vmot")
 async def cmd_vmot_master(body: dict = Body(...)):
+    blocked = reject_if_shutdown_in_progress()
+    if blocked is not None:
+        return blocked
     raw_on = body.get("on", body.get("enable", body.get("val")))
     if raw_on is None:
         return JSONResponse({"ok": False, "err": "on missing"}, status_code=400)
@@ -1399,6 +1440,9 @@ async def cmd_vmot_master(body: dict = Body(...)):
 
 @app.post("/api/cmd/strobo")
 async def cmd_strobo(body: dict = Body(...)):
+    blocked = reject_if_shutdown_in_progress()
+    if blocked is not None:
+        return blocked
     raw_on = body.get("on", body.get("enable", body.get("val")))
     if raw_on is None:
         return JSONResponse({"ok": False, "err": "on missing"}, status_code=400)
@@ -1435,6 +1479,79 @@ async def cmd_strobo(body: dict = Body(...)):
         payload={"on": on},
     )
     return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst, "udp_targets": sent_targets}
+
+
+@app.post("/api/cmd/shutdown")
+async def cmd_shutdown(body: Optional[dict] = Body(None)):
+    blocked = reject_if_shutdown_in_progress(allowed_cmd="SHDN")
+    if blocked is not None:
+        return blocked
+
+    shdn = shutdown_state()
+    if shdn.get("in_progress"):
+        return {"ok": True, "cmd_id": shdn.get("cmd_id"), "shutdown": shdn}
+
+    dst = "BAT1"
+    host = light_pod_host(dst)
+    if not host:
+        return JSONResponse({"ok": False, "err": "master pod host not configured"}, status_code=500)
+
+    requested_by = str((body or {}).get("requested_by") or "ui").strip()[:40] or "ui"
+    ts = int(state["last_update_ms"] or now_ms())
+    cmd_id = next_cmd_id()
+    fields = [
+        "SFC", dst, "CMD", "2",
+        str(cmd_id), str(ts),
+        "CmdId", str(cmd_id),
+        "Type", "SHDN",
+    ]
+    line = build_nmea_line(fields)
+
+    shdn.update({
+        "in_progress": True,
+        "requested_ts_ms": ts,
+        "requested_by": requested_by,
+        "cmd_id": cmd_id,
+        "dst": dst,
+        "host": host,
+        "last_error": None,
+    })
+
+    if state.get("logging", {}).get("enabled"):
+        append_event_jsonl({
+            "ts_ms": ts,
+            "mission_time": (state.get("nav") or {}).get("mission_time_s"),
+            "depth": (state.get("nav") or {}).get("depth_m"),
+            "heading": (state.get("nav") or {}).get("heading_deg"),
+            "lat": (state.get("nav") or {}).get("lat_deg"),
+            "lon": (state.get("nav") or {}).get("lon_deg"),
+            "alt_m": (state.get("nav") or {}).get("alt_m"),
+            "src": "SFC",
+            "type": "SHDN",
+            "text": f"Vehicle shutdown requested by {requested_by}",
+        })
+
+    try:
+        await stop_ping360_runtime()
+    except Exception as e:
+        shdn["last_error"] = f"ping360 stop failed: {e}"
+
+    try:
+        sent_targets = send_udp_line(line, [(host, UDP_TX_PORT)])
+    except Exception as e:
+        shdn["in_progress"] = False
+        shdn["last_error"] = f"udp send failed: {e}"
+        return JSONResponse({"ok": False, "err": shdn["last_error"], "shutdown": shdn}, status_code=500)
+
+    register_cmd(
+        cmd_id=cmd_id,
+        cmd_type="SHDN",
+        dst=dst,
+        ts_ms=ts,
+        payload={"requested_by": requested_by},
+    )
+    await ws_broadcast({"type": "shutdown", "shutdown": dict(shdn)})
+    return {"ok": True, "cmd_id": cmd_id, "dst": dst, "udp_targets": sent_targets, "shutdown": shdn}
 
 @app.get("/api/cmd/ack")
 def api_cmd_ack(cmd_id: int):

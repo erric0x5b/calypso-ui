@@ -32,6 +32,7 @@ DEFAULT_CFG: Dict[str, Any] = {
 SPEED_OF_SOUND_M_S = 1500.0
 COMMON_ACK = 1
 COMMON_NACK = 2
+COMMON_ASCII_TEXT = 3
 COMMON_DEVICE_INFORMATION = 4
 COMMON_PROTOCOL_VERSION = 5
 COMMON_GENERAL_REQUEST = 6
@@ -154,11 +155,11 @@ def build_auto_transmit_frame(cfg: Dict[str, Any]) -> bytes:
     return build_ping_frame(PING360_AUTO_TRANSMIT, payload=build_auto_transmit_payload(cfg))
 
 
-def build_transducer_payload(cfg: Dict[str, Any], angle_grad: int, transmit: int = 1) -> bytes:
+def build_transducer_payload(cfg: Dict[str, Any], angle_grad: int, transmit: int = 1, mode: int = 1) -> bytes:
     cfg = normalize_cfg(cfg)
     return struct.pack(
         "<BBHHHHHBB",
-        0,
+        _int_range(mode, 1, 0, 255),
         cfg["gain_setting"],
         _int_range(angle_grad, cfg["start_angle_grad"], 0, 399),
         cfg["transmit_duration_us"],
@@ -170,8 +171,8 @@ def build_transducer_payload(cfg: Dict[str, Any], angle_grad: int, transmit: int
     )
 
 
-def build_transducer_frame(cfg: Dict[str, Any], angle_grad: int, transmit: int = 1) -> bytes:
-    return build_ping_frame(PING360_TRANSDUCER, payload=build_transducer_payload(cfg, angle_grad, transmit))
+def build_transducer_frame(cfg: Dict[str, Any], angle_grad: int, transmit: int = 1, mode: int = 1) -> bytes:
+    return build_ping_frame(PING360_TRANSDUCER, payload=build_transducer_payload(cfg, angle_grad, transmit, mode=mode))
 
 
 def build_motor_off_frame(cfg: Dict[str, Any]) -> bytes:
@@ -315,18 +316,30 @@ def decode_protocol_version(payload: bytes) -> Dict[str, Any]:
 
 
 def decode_device_information(payload: bytes) -> Dict[str, Any]:
-    if len(payload) < 10:
-        return {"ok": False, "err": "short payload"}
-    device_type, device_revision, fw_major, fw_minor, fw_patch, reserved = struct.unpack_from("<BBHHHB", payload, 0)
-    return {
-        "ok": True,
-        "device_type": device_type,
-        "device_revision": device_revision,
-        "firmware_version_major": fw_major,
-        "firmware_version_minor": fw_minor,
-        "firmware_version_patch": fw_patch,
-        "reserved": reserved,
-    }
+    if len(payload) == 6:
+        device_type, device_revision, fw_major, fw_minor, fw_patch, reserved = struct.unpack_from("<BBBBBB", payload, 0)
+        return {
+            "ok": True,
+            "device_type": device_type,
+            "device_revision": device_revision,
+            "firmware_version_major": fw_major,
+            "firmware_version_minor": fw_minor,
+            "firmware_version_patch": fw_patch,
+            "reserved": reserved,
+        }
+    if len(payload) >= 9:
+        device_type, device_revision, fw_major, fw_minor, fw_patch, reserved = struct.unpack_from("<BBHHHB", payload, 0)
+        return {
+            "ok": True,
+            "device_type": device_type,
+            "device_revision": device_revision,
+            "firmware_version_major": fw_major,
+            "firmware_version_minor": fw_minor,
+            "firmware_version_patch": fw_patch,
+            "reserved": reserved,
+            "legacy_payload": True,
+        }
+    return {"ok": False, "err": "short payload"}
 
 
 def decode_nack(payload: bytes) -> Dict[str, Any]:
@@ -338,6 +351,13 @@ def decode_nack(payload: bytes) -> Dict[str, Any]:
         "ok": True,
         "nacked_id": nacked_id,
         "nack_message": nack_message,
+    }
+
+
+def decode_ascii_text(payload: bytes) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "ascii_message": payload.decode("ascii", errors="replace").strip("\x00\r\n "),
     }
 
 
@@ -424,6 +444,10 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
     manual_direction = 1
     manual_waiting = False
     manual_last_send_monotonic = 0.0
+    manual_mode = 1
+    manual_mode_fallback_used = False
+    last_profile_monotonic = 0.0
+    auto_first_command_monotonic = 0.0
 
     runtime["remote_ip"] = addr[0]
     runtime["bind_port"] = sock.getsockname()[1]
@@ -432,6 +456,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
     runtime["last_msg_id"] = None
     runtime["last_peer"] = ""
     runtime["scan_mode"] = "auto"
+    runtime["manual_command_mode"] = manual_mode
     state.setdefault("counters", {}).setdefault("ping360_rx", 0)
 
     while not stop_evt.is_set():
@@ -448,8 +473,20 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
 
             if runtime.get("scan_mode") == "manual":
                 manual_timeout_s = 4.5
+                if (
+                    manual_waiting
+                    and (now - manual_last_send_monotonic) >= manual_timeout_s
+                    and manual_mode == 1
+                    and not manual_mode_fallback_used
+                ):
+                    manual_mode = 0
+                    manual_mode_fallback_used = True
+                    runtime["manual_command_mode"] = manual_mode
+                    runtime["last_err"] = "manual scan timeout with mode=1, retry mode=0"
+                    manual_waiting = False
+                    manual_last_send_monotonic = 0.0
                 if (not manual_waiting) or ((now - manual_last_send_monotonic) >= manual_timeout_s):
-                    manual_frame = build_transducer_frame(cfg, manual_angle, 1)
+                    manual_frame = build_transducer_frame(cfg, manual_angle, 1, mode=manual_mode)
                     await loop.sock_sendto(sock, manual_frame, addr)
                     runtime["tx_total"] = int(runtime.get("tx_total", 0)) + 1
                     runtime["last_cmd_ms"] = int(time.time() * 1000) & 0xFFFFFFFF
@@ -457,6 +494,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                     runtime["scanning"] = True
                     manual_waiting = True
                     manual_last_send_monotonic = now
+                    runtime["manual_command_mode"] = manual_mode
             elif now - last_cmd_monotonic >= (1.0 if last_rx_monotonic == 0.0 else 5.0):
                 await loop.sock_sendto(sock, auto_frame, addr)
                 runtime["tx_total"] = int(runtime.get("tx_total", 0)) + 1
@@ -464,6 +502,17 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                 runtime["last_tx_ms"] = runtime["last_cmd_ms"]
                 runtime["scanning"] = True
                 last_cmd_monotonic = now
+                if auto_first_command_monotonic == 0.0:
+                    auto_first_command_monotonic = now
+
+            if runtime.get("scan_mode") == "auto" and auto_first_command_monotonic:
+                auto_timeout_s = 6.0
+                if last_profile_monotonic == 0.0 and (now - auto_first_command_monotonic) >= auto_timeout_s:
+                    runtime["scan_mode"] = "manual"
+                    runtime["manual_command_mode"] = manual_mode
+                    runtime["last_err"] = "auto_transmit timeout, fallback manual scan"
+                    manual_waiting = False
+                    manual_last_send_monotonic = 0.0
 
             data, peer = await asyncio.wait_for(loop.sock_recvfrom(sock, 65536), timeout=1.0)
             if peer[0] != addr[0]:
@@ -495,8 +544,18 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                     info = decode_device_information(payload)
                     if info.get("ok"):
                         runtime["device_information"] = info
+                        runtime["firmware_version"] = (
+                            f"{info['firmware_version_major']}."
+                            f"{info['firmware_version_minor']}."
+                            f"{info['firmware_version_patch']}"
+                        )
                     else:
                         runtime["last_err"] = info.get("err") or "device info decode failed"
+                    continue
+
+                if msg_id == COMMON_ASCII_TEXT:
+                    text = decode_ascii_text(payload)
+                    runtime["last_ascii_message"] = text.get("ascii_message", "")
                     continue
 
                 if msg_id == COMMON_NACK:
@@ -505,6 +564,19 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                         runtime["scan_mode"] = "manual"
                         runtime["last_err"] = "auto_transmit unsupported, fallback manual scan"
                         runtime["scanning"] = True
+                        manual_waiting = False
+                        manual_last_send_monotonic = 0.0
+                        continue
+                    elif (
+                        nack.get("ok")
+                        and nack.get("nacked_id") == PING360_TRANSDUCER
+                        and manual_mode == 1
+                        and not manual_mode_fallback_used
+                    ):
+                        manual_mode = 0
+                        manual_mode_fallback_used = True
+                        runtime["manual_command_mode"] = manual_mode
+                        runtime["last_err"] = "transducer mode=1 rejected, retry mode=0"
                         manual_waiting = False
                         manual_last_send_monotonic = 0.0
                         continue
@@ -533,6 +605,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
                     runtime["last_err"] = dd.get("err") or "decode failed"
                     continue
 
+                last_profile_monotonic = time.monotonic()
                 runtime["last"] = dd
                 runtime["scanning"] = True
                 runtime["range_m"] = round(estimate_range_m(dd.get("sample_period_25ns"), dd.get("num_samples")), 1)

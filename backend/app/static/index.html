@@ -33,6 +33,18 @@
       <div id="widgets_panel" class="dropdown hidden"></div>
     </div>
   </header>
+  <div class="shutdownCorner">
+    <button id="btn_shutdown_hold" class="shutdownHoldBtn" type="button" aria-label="Vehicle shutdown hold 3 seconds">
+      <span class="shutdownHoldFill" id="shutdown_hold_fill"></span>
+      <span class="shutdownHoldText" id="shutdown_hold_text">SHUTDOWN ROV (hold 3s)</span>
+    </button>
+  </div>
+  <div id="shutdown_overlay" class="shutdownOverlay hidden" aria-live="assertive">
+    <div class="shutdownOverlayCard">
+      <div class="shutdownOverlayTitle">Vehicle Shutdown In Progress</div>
+      <div class="shutdownOverlayText" id="shutdown_overlay_text">Master pod received shutdown request. Waiting for Raspberry Pi power-down sequence.</div>
+    </div>
+  </div>
   <div class="layout">
     <div class="main">
       <div id="missionWrap" class="missionWrap">

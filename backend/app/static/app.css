@@ -346,6 +346,84 @@ label {
   cursor: wait;
 }
 
+.shutdownCorner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+}
+
+.shutdownHoldBtn {
+  position: relative;
+  overflow: hidden;
+  min-width: 220px;
+  min-height: 42px;
+  border-color: rgba(239, 68, 68, .42);
+  background: rgba(239, 68, 68, .12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
+}
+
+.shutdownHoldBtn:hover {
+  border-color: rgba(239, 68, 68, .7);
+  background: rgba(239, 68, 68, .18);
+}
+
+.shutdownHoldBtn.holding {
+  border-color: rgba(239, 68, 68, .85);
+}
+
+.shutdownHoldBtn.busy {
+  opacity: .78;
+  pointer-events: none;
+}
+
+.shutdownHoldFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(239, 68, 68, .30), rgba(239, 68, 68, .56));
+  transition: width .08s linear;
+}
+
+.shutdownHoldText {
+  position: relative;
+  z-index: 1;
+  font-weight: 900;
+  letter-spacing: .2px;
+}
+
+.shutdownOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 11, 18, .72);
+  backdrop-filter: blur(6px);
+}
+
+.shutdownOverlayCard {
+  width: min(520px, calc(100vw - 32px));
+  padding: 22px 24px;
+  border-radius: 18px;
+  border: 1px solid rgba(239, 68, 68, .38);
+  background: linear-gradient(180deg, rgba(48, 12, 12, .92), rgba(18, 19, 24, .96));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .38);
+}
+
+.shutdownOverlayTitle {
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: .2px;
+  color: #fff2f2;
+}
+
+.shutdownOverlayText {
+  margin-top: 8px;
+  color: rgba(255, 242, 242, .82);
+  line-height: 1.45;
+}
+
 .widgetsMenu {
   justify-self: end;
   position: relative;
@@ -371,6 +449,15 @@ label {
 
   .widgetsMenu {
     grid-area: widgets;
+  }
+
+  .shutdownCorner {
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .shutdownHoldBtn {
+    min-width: 190px;
   }
 }
 

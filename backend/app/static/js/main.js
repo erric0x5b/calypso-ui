@@ -31,6 +31,11 @@ let vmotHoldActive = false;
 let vmotHoldStartMs = 0;
 let vmotLastBeepSec = -1;
 let vmotCmdBusy = false;
+let shutdownHoldTimer = null;
+let shutdownHoldActive = false;
+let shutdownHoldStartMs = 0;
+let shutdownLastBeepSec = -1;
+let shutdownCmdBusy = false;
 let stroboCmdBusy = false;
 let gpVmotHoldActive = false;
 let gpVmotHoldStartMs = 0;
@@ -42,6 +47,7 @@ let sonarCfg = null;
 const INPUT_SOURCE_BROKER = "broker";
 const INPUT_SOURCE_BROWSER = "browser_gamepad";
 const VMOT_ENABLE_HOLD_MS = 3000;
+const SHUTDOWN_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
 const VMOT_ACK_POLL_MS = 120;
 const STROBO_ACK_TIMEOUT_MS = 3000;
@@ -541,6 +547,77 @@ function renderStroboButton(state) {
     btn.title = meta.join(" | ") || `Master pod ${isOn ? "strobo attiva" : "strobo disattiva"}`;
 }
 
+function shutdownState() {
+    return snapshot?.system?.shutdown || {};
+}
+
+function isShutdownInProgress() {
+    return !!shutdownState()?.in_progress;
+}
+
+function shutdownHoldUi(progress, text = null) {
+    const btn = document.getElementById("btn_shutdown_hold");
+    const fill = document.getElementById("shutdown_hold_fill");
+    const label = document.getElementById("shutdown_hold_text");
+    if (!btn || !fill || !label) return;
+
+    const p = Math.max(0, Math.min(1, Number(progress) || 0));
+    fill.style.width = `${(p * 100).toFixed(1)}%`;
+    btn.classList.toggle("holding", shutdownHoldActive);
+    btn.classList.toggle("busy", shutdownCmdBusy || isShutdownInProgress());
+    btn.disabled = shutdownCmdBusy || isShutdownInProgress();
+    label.textContent = text || (isShutdownInProgress() ? "SHUTDOWN IN PROGRESS" : "SHUTDOWN ROV (hold 3s)");
+}
+
+function renderShutdownOverlay(state) {
+    const overlay = document.getElementById("shutdown_overlay");
+    const text = document.getElementById("shutdown_overlay_text");
+    if (!overlay || !text) return;
+
+    const shdn = state?.system?.shutdown || {};
+    const active = !!shdn.in_progress;
+    overlay.classList.toggle("hidden", !active);
+    if (!active) {
+        text.textContent = "Master pod received shutdown request. Waiting for Raspberry Pi power-down sequence.";
+        shutdownHoldUi(0);
+        return;
+    }
+
+    const parts = [
+        "Master pod received shutdown request.",
+        shdn.requested_by ? `source=${shdn.requested_by}` : "",
+        shdn.cmd_id != null ? `CmdId=${shdn.cmd_id}` : "",
+        shdn.host ? `host=${shdn.host}` : "",
+        "Waiting for Raspberry Pi power-down sequence.",
+    ].filter(Boolean);
+    text.textContent = parts.join(" ");
+    shutdownHoldUi(1, "SHUTDOWN IN PROGRESS");
+}
+
+function renderCommandLocks(state) {
+    const locked = !!(state?.system?.shutdown?.in_progress);
+    for (const id of [
+        "btn_strobo",
+        "vmot_enable_hold",
+        "vmot_disable_now",
+        "mission_log_start",
+        "mission_log_stop",
+        "mission_event_add",
+        "mission_meta_save",
+        "sonar_start",
+        "sonar_stop",
+        "sonar_clear",
+        "sonar_cfg_save",
+        "sonar_cfg_reload",
+        "video_stop",
+    ]) {
+        const node = document.getElementById(id);
+        if (!node) continue;
+        if (id === "btn_shutdown_hold") continue;
+        node.disabled = locked || !!node.disabled;
+    }
+}
+
 function vmotEnableUi(progress, text = null) {
     const btn = document.getElementById("vmot_enable_hold");
     const fill = document.getElementById("vmot_enable_fill");
@@ -581,6 +658,7 @@ async function waitCmdAck(cmdId, timeoutMs = VMOT_ACK_TIMEOUT_MS) {
 }
 
 async function sendVmotMaster(enable) {
+    if (isShutdownInProgress()) return false;
     if (vmotCmdBusy) return false;
     vmotSetBusy(true);
     try {
@@ -620,6 +698,7 @@ async function sendVmotMaster(enable) {
 }
 
 async function sendStrobo(enable) {
+    if (isShutdownInProgress()) return false;
     if (stroboCmdBusy) return false;
     stroboCmdBusy = true;
     renderStroboButton(snapshot);
@@ -738,6 +817,110 @@ function setupStroboControls() {
         });
     }
     renderStroboButton(snapshot);
+}
+
+function cancelShutdownHold() {
+    if (!shutdownHoldActive) return;
+    shutdownHoldActive = false;
+    if (shutdownHoldTimer != null) {
+        cancelAnimationFrame(shutdownHoldTimer);
+        shutdownHoldTimer = null;
+    }
+    shutdownHoldUi(0);
+}
+
+async function requestVehicleShutdown() {
+    if (shutdownCmdBusy || isShutdownInProgress()) return false;
+    shutdownCmdBusy = true;
+    shutdownHoldUi(1, "SHUTDOWN ROV (sending...)");
+
+    try {
+        if (snapshot?.logging?.enabled) {
+            await logs.apiPost("/api/log/event", { type: "SHDN", text: "Vehicle shutdown requested from UI" }).catch(() => { });
+        }
+        await logs.refreshLogStatus().catch(() => { });
+        await logs.refreshLogSessions().catch(() => { });
+
+        await logs.apiPost("/api/sonar/ping360/stop", {}).catch(() => { });
+        if (window.sonarPing360?.clear) window.sonarPing360.clear();
+        video.unmountVideo();
+
+        const j = await logs.apiPost("/api/cmd/shutdown", { requested_by: "ui" });
+        snapshot = snapshot || {};
+        snapshot.system = snapshot.system || {};
+        snapshot.system.shutdown = j?.shutdown || {
+            in_progress: true,
+            cmd_id: j?.cmd_id ?? null,
+            requested_by: "ui",
+        };
+        render(snapshot);
+        return true;
+    } catch (e) {
+        shutdownHoldUi(0, e?.message || "SHUTDOWN ROV (error)");
+        return false;
+    } finally {
+        shutdownCmdBusy = false;
+        shutdownHoldUi(0);
+    }
+}
+
+function shutdownHoldStep() {
+    if (!shutdownHoldActive) return;
+    const elapsed = Math.max(0, performance.now() - shutdownHoldStartMs);
+    const progress = Math.min(1, elapsed / SHUTDOWN_HOLD_MS);
+    const remainSec = Math.max(0, Math.ceil((SHUTDOWN_HOLD_MS - elapsed) / 1000));
+    shutdownHoldUi(progress, `SHUTDOWN ROV (${remainSec}s)`);
+
+    const sec = Math.floor(elapsed / 1000);
+    if (sec > shutdownLastBeepSec && sec > 0) {
+        shutdownLastBeepSec = sec;
+        playUiBeep(620, 0.12, 0.07, true);
+    }
+
+    if (elapsed >= SHUTDOWN_HOLD_MS) {
+        shutdownHoldActive = false;
+        shutdownHoldTimer = null;
+        shutdownHoldUi(1, "SHUTDOWN ROV (sending...)");
+        requestVehicleShutdown();
+        return;
+    }
+
+    shutdownHoldTimer = requestAnimationFrame(shutdownHoldStep);
+}
+
+function startShutdownHold(ev) {
+    if (shutdownCmdBusy || shutdownHoldActive || isShutdownInProgress()) return;
+    ensureAlarmAudioUnlock();
+    shutdownHoldActive = true;
+    shutdownHoldStartMs = performance.now();
+    shutdownLastBeepSec = -1;
+    shutdownHoldUi(0, "SHUTDOWN ROV (3s hold)");
+
+    const btn = document.getElementById("btn_shutdown_hold");
+    if (btn && ev && typeof ev.pointerId === "number" && btn.setPointerCapture) {
+        try { btn.setPointerCapture(ev.pointerId); } catch { }
+    }
+
+    shutdownHoldTimer = requestAnimationFrame(shutdownHoldStep);
+}
+
+function setupShutdownControls() {
+    const btn = document.getElementById("btn_shutdown_hold");
+    if (!btn || btn.dataset.wired) {
+        shutdownHoldUi(0);
+        return;
+    }
+
+    btn.dataset.wired = "1";
+    btn.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        startShutdownHold(ev);
+    });
+    btn.addEventListener("pointerup", () => cancelShutdownHold());
+    btn.addEventListener("pointercancel", () => cancelShutdownHold());
+    btn.addEventListener("lostpointercapture", () => cancelShutdownHold());
+    btn.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    shutdownHoldUi(0);
 }
 
 function resolveAlarmGuide(alarm) {
@@ -1583,12 +1766,13 @@ async function refreshMissionLogControls() {
     const pill = document.getElementById("mission_log_status");
     const bStart = document.getElementById("mission_log_start");
     const bStop = document.getElementById("mission_log_stop");
+    const shdn = isShutdownInProgress();
     try {
         const s = await fetch("/api/log/status").then((r) => r.json());
         const sid = String(s?.sid || "").trim();
         if (pill) pill.textContent = s?.enabled ? `LOG ON ${sid}` : (sid ? `LOG OFF ${sid}` : "LOG OFF");
-        if (bStart) bStart.disabled = !!s?.enabled;
-        if (bStop) bStop.disabled = !s?.enabled;
+        if (bStart) bStart.disabled = shdn || !!s?.enabled;
+        if (bStop) bStop.disabled = shdn || !s?.enabled;
     } catch {
         if (pill) pill.textContent = "LOG ?";
     }
@@ -1749,6 +1933,8 @@ function render(state) {
     renderVmotState(state);
     renderVmotCockpitWarning(state);
     renderStroboButton(state);
+    renderShutdownOverlay(state);
+    renderCommandLocks(state);
 
     const ar = document.getElementById("att_readout");
     if (ar) {
@@ -1811,6 +1997,7 @@ async function init() {
     ensureAlarmAudioUnlock();
     setupVmotControls();
     setupStroboControls();
+    setupShutdownControls();
     setupHelpPanel();
     setupAlarmPanelControls();
     renderWidgetsMenu();
@@ -1922,6 +2109,14 @@ async function init() {
                 snapshot = snapshot || {};
                 if (msg.controller) snapshot.controller = msg.controller;
                 if (msg.udp) snapshot.controller_udp = msg.udp;
+                requestRender();
+                return;
+            }
+
+            if (msg.type === "shutdown") {
+                snapshot = snapshot || {};
+                snapshot.system = snapshot.system || {};
+                if (msg.shutdown) snapshot.system.shutdown = msg.shutdown;
                 requestRender();
                 return;
             }
@@ -2287,8 +2482,10 @@ function syncSonarRuntimeStatus() {
         const peer = rt.last_peer ? ` peer=${rt.last_peer}` : "";
         const msg = rt.last_msg_id ? ` msg=${rt.last_msg_id}` : "";
         const ver = rt.protocol_version ? ` proto=${rt.protocol_version}` : "";
+        const fw = rt.firmware_version ? ` fw=${rt.firmware_version}` : "";
         const scanMode = rt.scan_mode ? ` mode=${rt.scan_mode}` : "";
-        cfgStatus.textContent = `host=${rt.host || "-"}:${rt.port || "-"} rx=${rx} tx=${rt.tx_total || 0}${scanMode}${bind}${peer}${msg}${ver}${err}`;
+        const manualCmd = Number.isFinite(Number(rt.manual_command_mode)) ? ` manual_cmd=${rt.manual_command_mode}` : "";
+        cfgStatus.textContent = `host=${rt.host || "-"}:${rt.port || "-"} rx=${rx} tx=${rt.tx_total || 0}${scanMode}${manualCmd}${bind}${peer}${msg}${ver}${fw}${err}`;
     }
 
     const range = Number(rt.range_m ?? sonarCfg?.range_m);
@@ -2989,6 +3186,16 @@ function setupJoystickControls() {
     const loop = () => {
         try {
             const status = document.getElementById("setup_gp_status");
+            if (isShutdownInProgress()) {
+                gpPrevButtons = [];
+                ctrlPrevSignals = {};
+                ctrlSignalsPrimed = false;
+                cancelGpVmotHold();
+                cancelVmotHold();
+                if (status) status.textContent = "Input locked: shutdown in progress.";
+                requestAnimationFrame(loop);
+                return;
+            }
             const source = currentInputSource();
             if (source === INPUT_SOURCE_BROKER) {
                 gpPrevButtons = [];

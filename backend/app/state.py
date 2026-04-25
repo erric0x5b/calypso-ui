@@ -39,6 +39,17 @@ def _default_logging(ctx_sid: str = None):
 
 
 state.setdefault("logging", {"enabled": False, "sid": None})
+state.setdefault("system", {
+    "shutdown": {
+        "in_progress": False,
+        "requested_ts_ms": 0,
+        "requested_by": None,
+        "cmd_id": None,
+        "dst": "BAT1",
+        "host": None,
+        "last_error": None,
+    }
+})
 state.setdefault("att", {"roll_deg": None, "pitch_deg": None, "yaw_deg": None})
 state.setdefault("nav", {
     "depth_m": None,
