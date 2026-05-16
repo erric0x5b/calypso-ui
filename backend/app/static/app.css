@@ -746,9 +746,9 @@ label {
 
 .powerScadaLayout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 30%) minmax(0, 1fr);
   gap: 10px;
-  align-items: start;
+  align-items: stretch;
   margin-top: 10px;
 }
 
@@ -761,15 +761,25 @@ label {
   min-width: 0;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
   overflow: visible;
 }
 
 #main_scada svg {
   width: 100%;
-  max-width: 920px;
+  max-width: none;
   height: auto;
   display: block;
+}
+
+@media (min-width: 981px) and (max-width: 1366px) {
+  .powerScadaLayout {
+    grid-template-columns: minmax(210px, 28%) minmax(0, 1fr);
+  }
+
+  .powerScadaPanel .vmotCtrl {
+    padding: 8px;
+  }
 }
 
 .vmotCtrl {

@@ -85,7 +85,7 @@ AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
 AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
 FFMPEG_BIN = os.getenv("CALYPSO_FFMPEG_BIN", "ffmpeg")
 RTSP_PROXY_TRANSPORT = os.getenv("CALYPSO_RTSP_TRANSPORT", "tcp").strip().lower() or "tcp"
-RTSP_PROXY_FPS = max(1, int(os.getenv("CALYPSO_RTSP_MJPEG_FPS", "10")))
+RTSP_PROXY_FPS = max(1, int(os.getenv("CALYPSO_RTSP_MJPEG_FPS", "24")))
 RTSP_PROXY_QSCALE = max(2, int(os.getenv("CALYPSO_RTSP_MJPEG_QSCALE", "7")))
 
 MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
@@ -185,10 +185,16 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
         "warning",
         "-rtsp_transport",
         RTSP_PROXY_TRANSPORT,
+        "-probesize",
+        "32768",
+        "-analyzeduration",
+        "0",
         "-fflags",
         "nobuffer",
         "-flags",
         "low_delay",
+        "-avioflags",
+        "direct",
         "-i",
         url,
         "-an",
@@ -198,6 +204,8 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
         f"fps={RTSP_PROXY_FPS}",
         "-q:v",
         str(RTSP_PROXY_QSCALE),
+        "-flush_packets",
+        "1",
         "-f",
         "image2pipe",
         "-vcodec",
