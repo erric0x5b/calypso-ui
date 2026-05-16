@@ -2,7 +2,7 @@ import * as utils from './utils.js?v=16';
 import { scadaSvg } from './power.js?v=17';
 import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js?v=18';
+import * as video from './video.js?v=19';
 import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 

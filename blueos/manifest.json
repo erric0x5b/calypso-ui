@@ -8,6 +8,86 @@
     "extension_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "company_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "versions": {
+      "0.4.8": {
+        "identifier": "f6c4b924-270a-55ae-9e8c-ce60dece71bf",
+        "type": "interface",
+        "website": "https://github.com/erric0x5b/calypso-ui",
+        "images": [
+          {
+            "expanded_size": 302947013,
+            "platform": {
+              "architecture": "arm",
+              "variant": "v7",
+              "os": "linux"
+            },
+            "digest": "sha256:e0968ea3a526b8d2eeb6101cee91fb5216e70e84e29ff9a395f9993944fd1e21"
+          }
+        ],
+        "authors": [
+          {
+            "name": "DeepEx",
+            "email": "support@deepex.example"
+          }
+        ],
+        "filter_tags": [
+          "rov",
+          "telemetry",
+          "control",
+          "video"
+        ],
+        "extra_links": {
+          "website": "https://github.com/erric0x5b/calypso-ui",
+          "support": "https://github.com/erric0x5b/calypso-ui/issues"
+        },
+        "tag": "0.4.8",
+        "docs": null,
+        "readme": "<h1>Calypso UI</h1>\n<p>BlueOS extension for the DeepEx Calypso ROV control interface.</p>\n<p>The extension provides the vehicle dashboard, power SCADA, telemetry widgets, mission logging, video stream display, sonar controls, diagnostics, and setup tools used by the Calypso UI backend.</p>",
+        "support": "https://github.com/erric0x5b/calypso-ui/issues",
+        "requirements": "core >= 1.1",
+        "company": {
+          "about": "ROV systems and marine exploration technologies",
+          "name": "DeepEx",
+          "email": "support@deepex.it"
+        },
+        "permissions": {
+          "ExposedPorts": {
+            "80/tcp": {},
+            "14590/udp": {},
+            "14591/udp": {},
+            "5010/udp": {}
+          },
+          "HostConfig": {
+            "ExtraHosts": [
+              "host.docker.internal:host-gateway"
+            ],
+            "PortBindings": {
+              "80/tcp": [
+                {
+                  "HostPort": ""
+                }
+              ],
+              "14590/udp": [
+                {
+                  "HostPort": "14590"
+                }
+              ],
+              "14591/udp": [
+                {
+                  "HostPort": "14591"
+                }
+              ],
+              "5010/udp": [
+                {
+                  "HostPort": "5010"
+                }
+              ]
+            },
+            "Binds": [
+              "/usr/blueos/extensions/it.deepex.calypso-ui:/data"
+            ]
+          }
+        }
+      },
       "0.4.7": {
         "identifier": "50977f9e-8927-5baa-90f4-12fb4c40e576",
         "type": "interface",
@@ -109,7 +189,7 @@
     },
     "repo_info": {
       "downloads": 0,
-      "last_updated": "2026-05-16T12:47:22Z",
+      "last_updated": "2026-05-16T14:19:15Z",
       "date_registered": "2026-05-16T00:00:00Z"
     }
   }

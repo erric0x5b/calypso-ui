@@ -2,13 +2,23 @@ import { el, setText } from './utils.js?v=16';
 
 const VIDEO_STREAM_COUNT = 3;
 const VIDEO_STORAGE_KEY = "calypso_video";
+const VIDEO_PREFS_VERSION = 2;
 const VIDEO_KINDS = new Set(["auto", "rtsp", "mjpeg", "video"]);
 const DEFAULT_STREAM = Object.freeze({ kind: "auto", url: "" });
+const DEFAULT_STREAMS = Object.freeze([
+  Object.freeze({ kind: "rtsp", url: "rtsp://admin:123456@192.168.2.15:554/mpeg4" }),
+  DEFAULT_STREAM,
+  DEFAULT_STREAM,
+]);
 
 export let videoState = loadVideoPrefs();
 
 function cloneDefaultStream() {
   return { ...DEFAULT_STREAM };
+}
+
+function cloneDefaultStreamAt(index) {
+  return { ...(DEFAULT_STREAMS[index] || DEFAULT_STREAM) };
 }
 
 function clampStreamIndex(value) {
@@ -26,9 +36,10 @@ function normalizeStream(raw) {
 
 function normalizeVideoPrefs(raw) {
   const base = {
+    version: VIDEO_PREFS_VERSION,
     activeIndex: 0,
     isStopped: false,
-    streams: Array.from({ length: VIDEO_STREAM_COUNT }, () => cloneDefaultStream()),
+    streams: Array.from({ length: VIDEO_STREAM_COUNT }, (_, i) => cloneDefaultStreamAt(i)),
   };
 
   const src = (raw && typeof raw === "object") ? raw : {};
@@ -36,8 +47,14 @@ function normalizeVideoPrefs(raw) {
     for (let i = 0; i < VIDEO_STREAM_COUNT; i += 1) {
       base.streams[i] = normalizeStream(src.streams[i]);
     }
+    if (src.version !== VIDEO_PREFS_VERSION && !base.streams[0].url) {
+      base.streams[0] = cloneDefaultStreamAt(0);
+    }
   } else if ("kind" in src || "url" in src) {
     base.streams[0] = normalizeStream(src);
+    if (!base.streams[0].url) {
+      base.streams[0] = cloneDefaultStreamAt(0);
+    }
   }
 
   base.activeIndex = clampStreamIndex(src.activeIndex);
