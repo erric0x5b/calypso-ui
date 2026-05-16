@@ -24,7 +24,7 @@ ENV DATA_DIR=/data
 EXPOSE 80 14590/udp 14591/udp 5010/udp
 
 # --- BlueOS labels (allineate alla doc) ---
-LABEL version="0.4.5"
+LABEL version="0.4.7"
 
 LABEL permissions='{\
   "ExposedPorts": {\
@@ -77,6 +77,8 @@ LABEL company='{\
 }'
 
 LABEL type="interface"
+
+LABEL tags='["rov","telemetry","control","video"]'
 
 LABEL readme="https://raw.githubusercontent.com/erric0x5b/calypso-ui/{tag}/README.md"
 

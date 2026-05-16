@@ -1,0 +1,6 @@
+{
+  "name": "Calypso UI",
+  "website": "https://github.com/erric0x5b/calypso-ui",
+  "docker": "ghcr.io/erric0x5b/calypso-ui",
+  "description": "DeepEx Calypso ROV control interface for BlueOS."
+}
