@@ -138,7 +138,7 @@ def register_service():
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.8",
+        "version": "0.4.9",
         "new_page": True,
         "avoid_iframes": True,
         "works_in_relative_paths": True,

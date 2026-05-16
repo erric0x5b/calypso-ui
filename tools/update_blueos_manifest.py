@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "ghcr.io/erric0x5b/calypso-ui"
 IDENTIFIER = "it.deepex.calypso-ui"
 LOGO = "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg"
+DEFAULT_PLATFORM = {"architecture": "arm", "variant": "v7", "os": "linux"}
 
 
 def run_json(args):
@@ -22,14 +23,24 @@ def manifest_for(image_ref):
     return run_json(["docker", "buildx", "imagetools", "inspect", "--raw", image_ref])
 
 
-def layer_size(image_ref, digest):
-    data = manifest_for(f"{image_ref}@{digest}")
+def layer_size(image_ref, digest=None, manifest_data=None):
+    data = manifest_data if manifest_data is not None else manifest_for(f"{image_ref}@{digest}")
     return sum(layer.get("size", 0) for layer in data.get("layers", []))
 
 
 def image_entries(version):
     image_ref = f"{IMAGE}:{version}"
     index = manifest_for(image_ref)
+    if "config" in index and "layers" in index:
+        return [{
+            "expanded_size": layer_size(image_ref, manifest_data=index),
+            "platform": DEFAULT_PLATFORM,
+            "digest": subprocess.check_output(
+                ["docker", "buildx", "imagetools", "inspect", image_ref],
+                text=True,
+            ).split("Digest:", 1)[1].splitlines()[0].strip(),
+        }]
+
     entries = []
     for item in index.get("manifests", []):
         platform = item.get("platform") or {}
