@@ -138,7 +138,7 @@ def register_service():
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.9",
+        "version": "0.4.10",
         "new_page": True,
         "avoid_iframes": True,
         "works_in_relative_paths": True,
@@ -617,12 +617,13 @@ def light_pod_host(pod: str) -> str:
     return ""
 
 
-def pod_command_targets(dst: str) -> list[tuple[str, int]]:
-    if dst == "ALL":
-        hosts = parse_udp_hosts(",".join([UDP_TX_HOST, UDP_TX_SLAVE_HOST]))
-    else:
-        hosts = parse_udp_hosts(light_pod_host(dst))
-    return [(host, UDP_TX_PORT) for host in hosts]
+def pod_command_destinations(dst: str) -> list[tuple[str, str, int]]:
+    pods = ("BAT1", "BAT2") if dst == "ALL" else (dst,)
+    targets: list[tuple[str, str, int]] = []
+    for pod in pods:
+        for host in parse_udp_hosts(light_pod_host(pod)):
+            targets.append((pod, host, UDP_TX_PORT))
+    return targets
 
 
 def lights_ids_for_pod(cfg: dict, pod: str) -> list[int]:
@@ -1510,20 +1511,22 @@ async def cmd_vmot_master(body: dict = Body(...)):
     cmd_id = next_cmd_id()
     ts = int(state["last_update_ms"] or 0)
 
-    fields = [
-        "SFC", dst, "CMD", "2",
-        str(cmd_id), str(ts),
-        "CmdId", str(cmd_id),
-        "Type", "VMOT",
-        "On", str(on),
-    ]
-    line = build_nmea_line(fields)
-    targets = pod_command_targets(dst)
+    targets = pod_command_destinations(dst)
     if not targets:
         return JSONResponse({"ok": False, "err": f"no UDP target for {dst}"}, status_code=500)
 
+    sent_targets = []
     try:
-        sent_targets = send_udp_line(line, targets)
+        for pod, host, port in targets:
+            fields = [
+                "SFC", pod, "CMD", "2",
+                str(cmd_id), str(ts),
+                "CmdId", str(cmd_id),
+                "Type", "VMOT",
+                "On", str(on),
+            ]
+            line = build_nmea_line(fields)
+            sent_targets.extend(send_udp_line(line, [(host, port)]))
     except Exception as e:
         return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
 

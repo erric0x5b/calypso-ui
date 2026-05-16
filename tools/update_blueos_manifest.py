@@ -11,7 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "ghcr.io/erric0x5b/calypso-ui"
 IDENTIFIER = "it.deepex.calypso-ui"
 LOGO = "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg"
-DEFAULT_PLATFORM = {"architecture": "arm", "variant": "v7", "os": "linux"}
+DEFAULT_PLATFORM = {"architecture": "arm64", "variant": None, "os": "linux"}
+DIRECT_PLATFORM_BY_VERSION = {
+    "0.4.8": {"architecture": "arm", "variant": "v7", "os": "linux"},
+}
 
 
 def run_json(args):
@@ -34,7 +37,7 @@ def image_entries(version):
     if "config" in index and "layers" in index:
         return [{
             "expanded_size": layer_size(image_ref, manifest_data=index),
-            "platform": DEFAULT_PLATFORM,
+            "platform": DIRECT_PLATFORM_BY_VERSION.get(version, DEFAULT_PLATFORM),
             "digest": subprocess.check_output(
                 ["docker", "buildx", "imagetools", "inspect", image_ref],
                 text=True,
