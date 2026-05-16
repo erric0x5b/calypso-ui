@@ -14,6 +14,15 @@
         "website": "https://github.com/erric0x5b/calypso-ui",
         "images": [
           {
+            "expanded_size": 350065374,
+            "platform": {
+              "architecture": "arm64",
+              "variant": null,
+              "os": "linux"
+            },
+            "digest": "sha256:0f7004231df9a8cce8c69f247fa91f869e9d91f227f02def047ecb7168db6f27"
+          },
+          {
             "expanded_size": 302946626,
             "platform": {
               "architecture": "arm",
@@ -269,7 +278,7 @@
     },
     "repo_info": {
       "downloads": 0,
-      "last_updated": "2026-05-16T14:37:18Z",
+      "last_updated": "2026-05-16T15:05:24Z",
       "date_registered": "2026-05-16T00:00:00Z"
     }
   }
