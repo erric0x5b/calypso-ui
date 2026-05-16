@@ -376,6 +376,85 @@ def update_depth_from_dict(msg: dict):
             break
 
 
+def nav_target_dict() -> dict:
+    nav = state.setdefault("nav", {})
+    target = nav.get("target")
+    if not isinstance(target, dict):
+        target = {}
+        nav["target"] = target
+    target.setdefault("heading_deg", None)
+    target.setdefault("depth_m", None)
+    target.setdefault("pitch_deg", None)
+    target.setdefault("roll_deg", None)
+    return target
+
+
+def normalize_heading_deg(heading_deg) -> Optional[float]:
+    hdg = to_float_or_none(heading_deg)
+    if hdg is None:
+        return None
+    hdg = math.fmod(hdg, 360.0)
+    if hdg < 0:
+        hdg += 360.0
+    return hdg
+
+
+def quaternion_to_euler_deg(q) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    if q is None:
+        return (None, None, None)
+    try:
+        values = list(q)
+    except Exception:
+        return (None, None, None)
+    if len(values) != 4:
+        return (None, None, None)
+    try:
+        w, x, y, z = (float(v) for v in values)
+    except Exception:
+        return (None, None, None)
+
+    sinr_cosp = 2.0 * (w * x + y * z)
+    cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+    roll_deg = math.degrees(math.atan2(sinr_cosp, cosr_cosp))
+
+    sinp = 2.0 * (w * y - z * x)
+    if abs(sinp) >= 1.0:
+        pitch_deg = math.degrees(math.copysign(math.pi / 2.0, sinp))
+    else:
+        pitch_deg = math.degrees(math.asin(sinp))
+
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    yaw_deg = normalize_heading_deg(math.degrees(math.atan2(siny_cosp, cosy_cosp)))
+    return (roll_deg, pitch_deg, yaw_deg)
+
+
+def update_nav_target_attitude(q=None, yaw_rad=None) -> None:
+    target = nav_target_dict()
+    roll_deg = pitch_deg = yaw_deg = None
+    if q is not None:
+        roll_deg, pitch_deg, yaw_deg = quaternion_to_euler_deg(q)
+    elif yaw_rad is not None:
+        yaw_f = to_float_or_none(yaw_rad)
+        if yaw_f is not None:
+            yaw_deg = normalize_heading_deg(math.degrees(yaw_f))
+
+    if roll_deg is not None:
+        target["roll_deg"] = roll_deg
+    if pitch_deg is not None:
+        target["pitch_deg"] = pitch_deg
+    if yaw_deg is not None:
+        target["heading_deg"] = yaw_deg
+
+
+def update_nav_target_depth_from_local_ned(z_down_m) -> None:
+    depth_m = to_float_or_none(z_down_m)
+    if depth_m is None:
+        return
+    target = nav_target_dict()
+    target["depth_m"] = depth_m if depth_m >= 0.0 else None
+
+
 def normalize_bool01(v) -> Optional[int]:
     if isinstance(v, bool):
         return 1 if v else 0
@@ -2115,8 +2194,11 @@ async def stop_ping360():
 # MAVLink readers (unchanged)
 # ----------------------------
 async def mavlink_reader():
+    loop = asyncio.get_running_loop()
+
     def _run():
         m = mavutil.mavlink_connection(MAVLINK_CONN, autoreconnect=True, source_system=255)
+        last_state_push = 0.0
         while True:
             msg = m.recv_match(blocking=True, timeout=1)
             if msg is None:
@@ -2136,6 +2218,8 @@ async def mavlink_reader():
                 state["att"]["roll_deg"]  = msg.roll  * 57.295779513
                 state["att"]["pitch_deg"] = msg.pitch * 57.295779513
                 state["att"]["yaw_deg"]   = msg.yaw   * 57.295779513
+            elif mt == "ATTITUDE_TARGET":
+                update_nav_target_attitude(q=getattr(msg, "q", None))
             elif mt == "HEARTBEAT":
                 update_mav_heartbeat_armed(
                     base_mode=getattr(msg, "base_mode", None),
@@ -2159,6 +2243,26 @@ async def mavlink_reader():
                     state["nav"]["heading_deg"] = float(hdg) / 100.0
                 if rel_alt is not None:
                     update_depth_from_alt(float(rel_alt) / 1000.0)
+            elif mt == "POSITION_TARGET_LOCAL_NED":
+                type_mask = int(getattr(msg, "type_mask", 0) or 0)
+                if (type_mask & 0x0004) == 0:
+                    update_nav_target_depth_from_local_ned(getattr(msg, "z", None))
+                if (type_mask & 0x0400) == 0:
+                    update_nav_target_attitude(yaw_rad=getattr(msg, "yaw", None))
+            elif mt == "POSITION_TARGET_GLOBAL_INT":
+                type_mask = int(getattr(msg, "type_mask", 0) or 0)
+                if (type_mask & 0x0400) == 0:
+                    update_nav_target_attitude(yaw_rad=getattr(msg, "yaw", None))
+
+            now = time.monotonic()
+            if (now - last_state_push) >= 0.10:
+                last_state_push = now
+                asyncio.run_coroutine_threadsafe(ws_broadcast({
+                    "type": "state",
+                    "thr": {k: state.get("thr", {}).get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
+                    "att": dict(state.get("att") or {}),
+                    "nav": dict(state.get("nav") or {}),
+                }), loop)
 
     await asyncio.to_thread(_run)
 
@@ -2185,6 +2289,8 @@ async def mavlink_ws_loop():
     # throttle broadcast thr per non spammare la UI
     last_thr_push = 0.0
     THR_PUSH_MIN_DT = 0.05  # 50ms => max 20Hz
+    last_state_push = 0.0
+    STATE_PUSH_MIN_DT = 0.10
 
     while True:
         try:
@@ -2223,6 +2329,8 @@ async def mavlink_ws_loop():
                             "pitch_deg": float(pitch) * RAD2DEG if pitch is not None else None,
                             "yaw_deg": float(yaw) * RAD2DEG if yaw is not None else None,
                         }
+                    elif mtype == "ATTITUDE_TARGET":
+                        update_nav_target_attitude(q=msg.get("q"))
                     elif mtype == "HEARTBEAT":
                         update_mav_heartbeat_armed(
                             base_mode=msg.get("base_mode", msg.get("baseMode")),
@@ -2254,6 +2362,16 @@ async def mavlink_ws_loop():
                             state["nav"]["lon_deg"] = float(lon) / 1e7
                         if rel_alt is not None:
                             update_depth_from_alt(float(rel_alt) / 1000.0)
+                    elif mtype == "POSITION_TARGET_LOCAL_NED":
+                        type_mask = int(msg.get("type_mask", msg.get("typeMask")) or 0)
+                        if (type_mask & 0x0004) == 0:
+                            update_nav_target_depth_from_local_ned(msg.get("z"))
+                        if (type_mask & 0x0400) == 0:
+                            update_nav_target_attitude(yaw_rad=msg.get("yaw"))
+                    elif mtype == "POSITION_TARGET_GLOBAL_INT":
+                        type_mask = int(msg.get("type_mask", msg.get("typeMask")) or 0)
+                        if (type_mask & 0x0400) == 0:
+                            update_nav_target_attitude(yaw_rad=msg.get("yaw"))
                     elif mtype == "GPS_RAW_INT":
                         lat = msg.get("lat")
                         lon = msg.get("lon")
@@ -2298,6 +2416,16 @@ async def mavlink_ws_loop():
                                 "type": "thr",
                                 "thr": {k: state["thr"].get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
                             })
+
+                    now = asyncio.get_running_loop().time()
+                    if (now - last_state_push) >= STATE_PUSH_MIN_DT:
+                        last_state_push = now
+                        await ws_broadcast({
+                            "type": "state",
+                            "thr": {k: state["thr"].get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
+                            "att": dict(state.get("att") or {}),
+                            "nav": dict(state.get("nav") or {}),
+                        })
         except Exception as e:
             state.setdefault("mav", {})["connected"] = False
             print(f"[mavlink] error: {e}")

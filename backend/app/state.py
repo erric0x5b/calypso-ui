@@ -58,6 +58,12 @@ state.setdefault("nav", {
     "lat_deg": None,
     "lon_deg": None,
     "mission_time_s": None,
+    "target": {
+        "heading_deg": None,
+        "depth_m": None,
+        "pitch_deg": None,
+        "roll_deg": None,
+    },
 })
 state.setdefault("mav", {
     "last_ms": 0,

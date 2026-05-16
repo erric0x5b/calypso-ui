@@ -1356,6 +1356,44 @@ function fmtControllerValue(v, digits = 2) {
     return Math.abs(n) >= 10 ? String(Math.round(n)) : n.toFixed(digits);
 }
 
+function fmtHeadingValue(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "-";
+    const heading = ((n % 360) + 360) % 360;
+    return `${String(Math.round(heading)).padStart(3, "0")}°`;
+}
+
+function fmtAngleValue(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "-";
+    return `${n.toFixed(1)}°`;
+}
+
+function fmtDepthValue(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "-";
+    return `${n.toFixed(2)} m`;
+}
+
+function attitudeMetricHtml(label, value, unit = "", tone = "secondary") {
+    return `
+      <div class="attitudeMetric ${tone}">
+        <div class="attitudeMetricLabel">${escapeHtml(label)}</div>
+        <div class="attitudeMetricValue">${escapeHtml(value)}</div>
+        <div class="attitudeMetricUnit">${escapeHtml(unit)}</div>
+      </div>
+    `;
+}
+
+function attitudeSetpointHtml(label, value, accent = false) {
+    return `
+      <div class="attitudeSetpoint ${accent ? "accent" : ""}">
+        <span>${escapeHtml(label)}</span>
+        <b>${escapeHtml(value)}</b>
+      </div>
+    `;
+}
+
 function axisBarHtml(label, value, scale = 1000) {
     const n = Number(value);
     const norm = Number.isFinite(n) ? clamp(n / scale, -1, 1) : 0;
@@ -1422,6 +1460,39 @@ function renderControllerStatus(state) {
 quality=${escapeHtml(ctrl.source_quality ?? "-")} stale=${controllerBool(health.link_stale) ? "true" : "false"} safe=${controllerBool(health.safe_output) ? "true" : "false"} vjoy=${controllerBool(health.vjoy_ok) ? "true" : "false"}
 rx_valid=${escapeHtml(udp.rx_valid ?? 0)} rx_invalid=${escapeHtml(udp.rx_invalid ?? 0)} from=${escapeHtml(udp.last_from || "-")}
 events=${escapeHtml(lastEvents || "-")}</div>
+    `);
+}
+
+function renderAttitudeWidget(state) {
+    const host = document.getElementById("attitude_widget");
+    if (!host) return;
+
+    const nav = state?.nav || {};
+    const att = state?.att || {};
+    const target = nav?.target || {};
+    const headingNow = nav?.heading_deg ?? att?.yaw_deg;
+    const targetValues = [target?.heading_deg, target?.depth_m, target?.pitch_deg, target?.roll_deg];
+    const hasTarget = targetValues.some((v) => Number.isFinite(Number(v)));
+
+    utils.setHTML("attitude_widget", `
+      <div class="attitudeGrid">
+        ${attitudeMetricHtml("Heading", fmtHeadingValue(headingNow), "yaw / prua", "primary")}
+        ${attitudeMetricHtml("Depth", fmtDepthValue(nav?.depth_m), "quota attuale", "primary")}
+        ${attitudeMetricHtml("Pitch", fmtAngleValue(att?.pitch_deg), "assetto longitudinale")}
+        ${attitudeMetricHtml("Roll", fmtAngleValue(att?.roll_deg), "assetto trasversale")}
+      </div>
+      <div class="attitudeTargetPanel ${hasTarget ? "has-target" : ""}">
+        <div class="attitudeTargetHead">
+          <span>Setpoint MAVLink</span>
+          <span class="badge ${hasTarget ? "ok" : "muted"}">${hasTarget ? "LIVE" : "N/D"}</span>
+        </div>
+        <div class="attitudeTargetGrid">
+          ${attitudeSetpointHtml("Heading SP", fmtHeadingValue(target?.heading_deg), true)}
+          ${attitudeSetpointHtml("Depth SP", fmtDepthValue(target?.depth_m), true)}
+          ${attitudeSetpointHtml("Pitch SP", fmtAngleValue(target?.pitch_deg))}
+          ${attitudeSetpointHtml("Roll SP", fmtAngleValue(target?.roll_deg))}
+        </div>
+      </div>
     `);
 }
 
@@ -1975,6 +2046,7 @@ function render(state) {
     highlightGpLightChannel();
     syncSonarRuntimeStatus();
     renderControllerStatus(state);
+    renderAttitudeWidget(state);
     const activeId = document.activeElement?.id || "";
     if (setupWired && uiPrefs.mainTab === "setup" && !activeId.startsWith("setup_gp_") && activeId !== "setup_input_source") {
         syncInputMappingControls();
@@ -2153,6 +2225,7 @@ const WIDGETS = [
     { id: "alarms", title: "Allarmi" },
     { id: "lights", title: "Luci" },
     { id: "controller", title: "Controller" },
+    { id: "attitude", title: "Assetto" },
     { id: "motors", title: "Motori" },
     { id: "missionlog", title: "Mission Log" },
 ];
@@ -2182,6 +2255,7 @@ uiPrefs.sonarPalette ??= "jet";
 uiPrefs.collapsed.alarms ??= true;
 uiPrefs.collapsed.lights ??= false;
 uiPrefs.collapsed.controller ??= false;
+uiPrefs.collapsed.attitude ??= false;
 uiPrefs.collapsed.motors ??= true;
 uiPrefs.collapsed.missionlog ??= true;
 uiPrefs.lightsCfgCollapsed ??= true;
@@ -2194,6 +2268,7 @@ if (uiPrefs.layoutPresetVersion !== 1) {
     uiPrefs.collapsed.alarms = true;
     uiPrefs.collapsed.lights = false;
     uiPrefs.collapsed.controller = false;
+    uiPrefs.collapsed.attitude = false;
     uiPrefs.collapsed.motors = true;
     uiPrefs.collapsed.missionlog = true;
     uiPrefs.lightsCfgCollapsed = true;

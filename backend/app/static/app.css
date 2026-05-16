@@ -1860,6 +1860,110 @@ svg.thRing {
   justify-content: space-between;
 }
 
+.attitudeWidget {
+  display: grid;
+  gap: 10px;
+}
+
+.attitudeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.attitudeMetric {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 14px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .02));
+}
+
+.attitudeMetric.primary {
+  border-color: rgba(45, 107, 255, .26);
+  background: linear-gradient(180deg, rgba(45, 107, 255, .16), rgba(11, 18, 34, .45));
+}
+
+.attitudeMetricLabel {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.attitudeMetricValue {
+  margin-top: 8px;
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: 1;
+  font-weight: 900;
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.attitudeMetricUnit {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.attitudeTargetPanel {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.attitudeTargetPanel.has-target {
+  border-color: rgba(34, 197, 94, .18);
+  background: linear-gradient(180deg, rgba(34, 197, 94, .08), rgba(255, 255, 255, .025));
+}
+
+.attitudeTargetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.attitudeTargetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.attitudeSetpoint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .035);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attitudeSetpoint b {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.attitudeSetpoint.accent b {
+  color: #dbe8ff;
+}
+
+@media (max-width: 560px) {
+  .attitudeGrid,
+  .attitudeTargetGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .helpOverlay {
   position: fixed;
   inset: 0;
