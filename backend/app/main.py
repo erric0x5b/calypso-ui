@@ -617,6 +617,14 @@ def light_pod_host(pod: str) -> str:
     return ""
 
 
+def pod_command_targets(dst: str) -> list[tuple[str, int]]:
+    if dst == "ALL":
+        hosts = parse_udp_hosts(",".join([UDP_TX_HOST, UDP_TX_SLAVE_HOST]))
+    else:
+        hosts = parse_udp_hosts(light_pod_host(dst))
+    return [(host, UDP_TX_PORT) for host in hosts]
+
+
 def lights_ids_for_pod(cfg: dict, pod: str) -> list[int]:
     pod_cfg = (cfg.get("pods") or {}).get(pod) or {}
     ids = pod_cfg.get("lamp_ids", [])
@@ -1510,8 +1518,12 @@ async def cmd_vmot_master(body: dict = Body(...)):
         "On", str(on),
     ]
     line = build_nmea_line(fields)
+    targets = pod_command_targets(dst)
+    if not targets:
+        return JSONResponse({"ok": False, "err": f"no UDP target for {dst}"}, status_code=500)
+
     try:
-        udp_tx_sock.sendto(line.encode("ascii"), (UDP_TX_HOST, UDP_TX_PORT))
+        sent_targets = send_udp_line(line, targets)
     except Exception as e:
         return JSONResponse({"ok": False, "err": f"udp send failed: {e}"}, status_code=500)
 
@@ -1522,7 +1534,7 @@ async def cmd_vmot_master(body: dict = Body(...)):
         ts_ms=ts,
         payload={"on": on},
     )
-    return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst}
+    return {"ok": True, "cmd_id": cmd_id, "on": on, "dst": dst, "udp_targets": sent_targets}
 
 
 @app.post("/api/cmd/strobo")

@@ -258,6 +258,7 @@ Behavior:
 - `On=1`: starts sequential VMOT enable logic.
 - `On=0`: clears VMOT command and turns VMOT channels off.
 - If `On=1`, interlocks are checked first; on fail returns `CMD_ERR_INTERLOCK`.
+- UI/backend sends `DST=ALL` to both configured pod UDP targets (`CALYPSO_UDP_TX_HOST` and `CALYPSO_UDP_TX_SLAVE_HOST`).
 
 ### `Type=DVTHR`
 
