@@ -386,6 +386,13 @@ def next_scan_angle(cfg: Dict[str, Any], current_angle: int, direction: int) -> 
     return (start + candidate) % 400, direction
 
 
+def is_full_scan_sector(cfg: Dict[str, Any]) -> bool:
+    start = _int_range(cfg.get("start_angle_grad"), DEFAULT_CFG["start_angle_grad"], 0, 399)
+    stop = _int_range(cfg.get("stop_angle_grad"), DEFAULT_CFG["stop_angle_grad"], 0, 399)
+    span = (stop - start) % 400
+    return span == 0 or span >= 399
+
+
 @dataclass
 class Ping360Runtime:
     running: bool = False
@@ -455,7 +462,7 @@ async def ping360_task(state: Dict[str, Any], ws_broadcast, stop_evt: asyncio.Ev
     runtime["last_tx_ms"] = 0
     runtime["last_msg_id"] = None
     runtime["last_peer"] = ""
-    runtime["scan_mode"] = "auto"
+    runtime["scan_mode"] = "auto" if is_full_scan_sector(cfg) else "manual"
     runtime["manual_command_mode"] = manual_mode
     state.setdefault("counters", {}).setdefault("ping360_rx", 0)
 

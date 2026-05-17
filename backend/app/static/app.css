@@ -321,13 +321,15 @@ label {
 }
 
 .tabAction {
-  min-width: 112px;
+  min-width: 132px;
 }
 
 .tabStrobo {
   margin-left: 8px;
   border-color: rgba(245, 158, 11, .28);
   background: rgba(245, 158, 11, .08);
+  white-space: nowrap;
+  text-align: center;
 }
 
 .tabStrobo:hover {
@@ -1518,7 +1520,7 @@ svg.thRing {
   width: 100%;
   aspect-ratio: 16 / 9;
   min-height: 180px;
-  max-height: 42vh;
+  max-height: 56vh;
   background: #000;
   position: relative;
 }

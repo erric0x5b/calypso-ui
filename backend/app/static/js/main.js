@@ -2,7 +2,7 @@ import * as utils from './utils.js?v=16';
 import { scadaSvg } from './power.js?v=17';
 import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js?v=19';
+import * as video from './video.js?v=20';
 import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
@@ -609,6 +609,7 @@ function renderCommandLocks(state) {
         "sonar_clear",
         "sonar_cfg_save",
         "sonar_cfg_reload",
+        "video_snapshot",
         "video_stop",
     ]) {
         const node = document.getElementById(id);
@@ -1745,9 +1746,10 @@ function formatMissionEventLine(evt) {
     const lon = evt?.lon != null ? ` lon:${Number(evt.lon).toFixed(6)}` : "";
     const hdg = evt?.heading != null ? ` hdg:${Number(evt.heading).toFixed(1)}` : "";
     const dep = evt?.depth != null ? ` depth:${Number(evt.depth).toFixed(2)}` : "";
+    const media = evt?.media ? ` media:${escapeHtml(evt.media)}` : "";
     const typ = escapeHtml(evt?.type || "EVENT");
     const text = escapeHtml(evt?.text || evt?.raw || "-");
-    return `<div><b>${typ}</b> ${text} <span style="opacity:.75;">(${ts}${mt}${lat}${lon}${hdg}${dep})</span></div>`;
+    return `<div><b>${typ}</b> ${text} <span style="opacity:.75;">(${ts}${mt}${lat}${lon}${hdg}${dep}${media})</span></div>`;
 }
 
 function missionMetaFormNodes() {
@@ -1796,6 +1798,7 @@ function renderMissionManifestBlock(data) {
     const m = data.manifest;
     const files = m.files || {};
     const sizes = data.sizes || {};
+    const mediaCount = Array.isArray(m.media) ? m.media.length : 0;
     const mm = m.mission || {};
     const rows = [
         `<div><b>SID:</b> ${escapeHtml(m.sid || "-")}</div>`,
@@ -1810,6 +1813,7 @@ function renderMissionManifestBlock(data) {
         `<div><b>Telemetria:</b> ${escapeHtml(files.telemetry || "-")} (${fmtBytes(sizes.telemetry)})</div>`,
         `<div><b>Allarmi:</b> ${escapeHtml(files.alarms || "-")} (${fmtBytes(sizes.alarms)})</div>`,
         `<div><b>Eventi:</b> ${escapeHtml(files.events || "-")} (${fmtBytes(sizes.events)})</div>`,
+        `<div><b>Media:</b> ${mediaCount} file (${fmtBytes(sizes.media)})</div>`,
     ];
     box.innerHTML = rows.join("");
 }

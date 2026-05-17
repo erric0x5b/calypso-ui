@@ -133,6 +133,7 @@ export async function refreshLogSessions() {
         if (x.telemetry) files.push("telemetry");
         if (x.alarms) files.push("alarms");
         if (x.events) files.push("events");
+        if (Number(x.media_count || 0) > 0) files.push(`media:${Number(x.media_count || 0)}`);
         return `
           <div class="logRow" data-sid="${x.sid}">
             <button type="button" class="logSelBtn" data-sid="${x.sid}" aria-pressed="false"></button>

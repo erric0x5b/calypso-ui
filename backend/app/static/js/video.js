@@ -158,6 +158,7 @@ function bindStreamControls(index) {
 
 export function setupVideo() {
   const stop = el("video_stop");
+  const snapshot = el("video_snapshot");
   if (!stop) return;
 
   syncVideoInputs();
@@ -173,6 +174,20 @@ export function setupVideo() {
     renderVideoPresetUi();
     setText("video_status", `${streamLabel(videoState.activeIndex)} stopped`);
   };
+
+  if (snapshot) {
+    snapshot.onclick = async () => {
+      snapshot.disabled = true;
+      try {
+        const saved = await captureActiveSnapshotToLog();
+        setText("video_status", `${streamLabel(videoState.activeIndex)} snapshot saved: ${saved.file}`);
+      } catch (e) {
+        setText("video_status", e?.message || "snapshot failed");
+      } finally {
+        snapshot.disabled = false;
+      }
+    };
+  }
 }
 
 export function selectVideoStream(index) {
@@ -237,6 +252,7 @@ export function mountVideo(kind, url, label = "Stream") {
 
   if (resolved.kind === "mjpeg") {
     const img = document.createElement("img");
+    img.crossOrigin = "anonymous";
     img.src = resolved.url;
     img.onload = () => setText("video_status", `${label} ${resolved.statusOk}`);
     img.onerror = () => setText("video_status", `${label} ${resolved.statusErr}`);
@@ -246,6 +262,7 @@ export function mountVideo(kind, url, label = "Stream") {
 
   const v = document.createElement("video");
   v.autoplay = true;
+  v.crossOrigin = "anonymous";
   v.muted = true;
   v.playsInline = true;
   v.controls = true;
@@ -265,4 +282,74 @@ export function mountActiveVideo() {
   }
   const stream = currentStream();
   mountVideo(stream.kind, stream.url, streamLabel(videoState.activeIndex));
+}
+
+function activeMediaElement() {
+  const slot = el("video_slot");
+  if (!slot || videoState.isStopped) return null;
+  return slot.querySelector("video,img");
+}
+
+function mediaDimensions(node) {
+  if (!node) return { width: 0, height: 0 };
+  if (node.tagName === "VIDEO") {
+    return {
+      width: Number(node.videoWidth || 0),
+      height: Number(node.videoHeight || 0),
+    };
+  }
+  return {
+    width: Number(node.naturalWidth || node.clientWidth || 0),
+    height: Number(node.naturalHeight || node.clientHeight || 0),
+  };
+}
+
+function drawMediaSnapshot(node) {
+  const dims = mediaDimensions(node);
+  if (!dims.width || !dims.height) {
+    throw new Error("snapshot non disponibile: stream non pronto");
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = dims.width;
+  canvas.height = dims.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("snapshot non disponibile: canvas non supportato");
+  ctx.drawImage(node, 0, 0, dims.width, dims.height);
+  return canvas.toDataURL("image/png");
+}
+
+export async function captureActiveSnapshotToLog() {
+  const node = activeMediaElement();
+  if (!node) throw new Error("snapshot non disponibile: nessun video attivo");
+
+  let image;
+  try {
+    image = drawMediaSnapshot(node);
+  } catch (e) {
+    const msg = e?.name === "SecurityError"
+      ? "snapshot non disponibile: sorgente video senza CORS, usa RTSP proxy o stream same-origin"
+      : (e?.message || "snapshot non disponibile");
+    throw new Error(msg);
+  }
+
+  const stream = currentStream();
+  const r = await fetch("/api/log/snapshot", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image,
+      text: `${streamLabel(videoState.activeIndex)} snapshot`,
+      stream: {
+        index: videoState.activeIndex + 1,
+        kind: stream.kind,
+        url: stream.url,
+      },
+    }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j?.ok) {
+    throw new Error(j?.err || j?.detail || (`HTTP ${r.status}`));
+  }
+  return j;
 }

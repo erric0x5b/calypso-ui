@@ -24,7 +24,7 @@ ENV DATA_DIR=/data
 EXPOSE 80 14590/udp 14591/udp 5010/udp
 
 # --- BlueOS labels (allineate alla doc) ---
-LABEL version="0.4.10"
+LABEL version="0.4.11"
 
 LABEL permissions='{\
   "ExposedPorts": {\

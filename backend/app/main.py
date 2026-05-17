@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import csv
 import io
 import logging as py_logging
@@ -1746,17 +1748,28 @@ def api_set_autolog_cfg(cfg: dict = Body(...)):
 
 SID_RE = re.compile(r"^\d{8}_\d{6}$")
 SESSION_RE = re.compile(r"^(telemetry|alarms|events)_(\d{8}_\d{6})\.(csv|jsonl)$")
+SNAPSHOT_RE = re.compile(r"^snapshot_(\d{8}_\d{6})_(\d{3})\.png$")
 
 def list_sessions(log_dir: str):
     sessions = {}
     try:
         for name in os.listdir(log_dir):
             m = SESSION_RE.match(name)
-            if not m:
+            media_sid = None
+            media_dir = os.path.join(log_dir, name)
+            if os.path.isdir(media_dir) and name.startswith("media_"):
+                candidate = name[6:]
+                if SID_RE.fullmatch(candidate):
+                    media_sid = candidate
+            if not m and not media_sid:
                 continue
-            kind, sid, _ext = m.group(1), m.group(2), m.group(3)
-            sessions.setdefault(sid, {})
-            sessions[sid][kind] = os.path.join(log_dir, name)
+            if media_sid:
+                sessions.setdefault(media_sid, {})
+                sessions[media_sid]["media_dir"] = media_dir
+            else:
+                kind, sid, _ext = m.group(1), m.group(2), m.group(3)
+                sessions.setdefault(sid, {})
+                sessions[sid][kind] = os.path.join(log_dir, name)
     except FileNotFoundError:
         return {}
     return dict(sorted(sessions.items(), key=lambda kv: kv[0], reverse=True))
@@ -1806,6 +1819,27 @@ def resolve_sid(requested_sid: str | None, sessions: dict, cur_sid: str | None) 
 
 def mission_meta_path(sid: str) -> str:
     return os.path.join(LOG_DIR, f"manifest_{sid}.json")
+
+def session_media_dir(sid: str) -> str:
+    return os.path.join(LOG_DIR, f"media_{sid}")
+
+def list_session_media(sid: str) -> list[dict]:
+    root = session_media_dir(sid)
+    out = []
+    if not os.path.isdir(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        if not SNAPSHOT_RE.fullmatch(name):
+            continue
+        p = os.path.join(root, name)
+        if not os.path.isfile(p):
+            continue
+        out.append({
+            "name": name,
+            "path": p,
+            "size": os.path.getsize(p),
+        })
+    return out
 
 def sanitize_mission_meta(raw: dict, sid: str) -> dict:
     raw = raw if isinstance(raw, dict) else {}
@@ -1868,11 +1902,16 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
                         name = os.path.basename(p)
                         z.write(p, arcname=f"{sid}/{name}")
                         files_manifest[kind] = name
+                media_manifest = []
+                for media in list_session_media(sid):
+                    z.write(media["path"], arcname=f"{sid}/media/{media['name']}")
+                    media_manifest.append({"file": f"media/{media['name']}", "size": media["size"]})
                 one_manifest = {
                     "sid": sid,
                     "created_utc": created_utc,
                     "start_utc": start_utc,
                     "files": files_manifest,
+                    "media": media_manifest,
                     "mission": load_mission_meta(sid),
                 }
                 z.writestr(f"{sid}/manifest_{sid}.json", json.dumps(one_manifest, indent=2))
@@ -1889,11 +1928,16 @@ def build_session_zip(buf: io.BytesIO, sessions: dict, sids: list[str], multi: b
                     name = os.path.basename(p)
                     z.write(p, arcname=name)
                     files_manifest[kind] = name
+            media_manifest = []
+            for media in list_session_media(sid):
+                z.write(media["path"], arcname=f"media/{media['name']}")
+                media_manifest.append({"file": f"media/{media['name']}", "size": media["size"]})
             manifest = {
                 "sid": sid,
                 "created_utc": created_utc,
                 "start_utc": start_utc,
                 "files": files_manifest,
+                "media": media_manifest,
                 "mission": load_mission_meta(sid),
             }
             z.writestr(f"manifest_{sid}.json", json.dumps(manifest, indent=2))
@@ -1908,6 +1952,7 @@ def api_log_sessions():
             "telemetry": os.path.basename(files.get("telemetry", "")) if "telemetry" in files else None,
             "alarms": os.path.basename(files.get("alarms", "")) if "alarms" in files else None,
             "events": os.path.basename(files.get("events", "")) if "events" in files else None,
+            "media_count": len(list_session_media(sid)),
         })
     return {"sessions": out}
 
@@ -1988,6 +2033,13 @@ def api_log_delete(payload: dict = Body(...)):
                 removed.append(os.path.basename(p))
             except Exception:
                 pass
+    media_dir = session_media_dir(sid)
+    if os.path.isdir(media_dir):
+        try:
+            shutil.rmtree(media_dir)
+            removed.append(os.path.basename(media_dir))
+        except Exception:
+            pass
 
     if (not cur.get("enabled")) and cur.get("sid") == sid:
         state["logging"] = {"enabled": False, "sid": None}
@@ -2023,6 +2075,13 @@ def api_log_delete_many(payload: dict = Body(...)):
                     removed.append(os.path.basename(p))
                 except Exception:
                     pass
+        media_dir = session_media_dir(sid)
+        if os.path.isdir(media_dir):
+            try:
+                shutil.rmtree(media_dir)
+                removed.append(os.path.basename(media_dir))
+            except Exception:
+                pass
         deleted.append(sid)
         removed_by_sid[sid] = removed
 
@@ -2061,6 +2120,9 @@ def api_log_manifest(sid: str | None = None):
                 sizes[kind] = os.path.getsize(p)
             except Exception:
                 sizes[kind] = None
+    media = list_session_media(chosen_sid)
+    manifest["media"] = [{"file": f"media/{item['name']}", "size": item["size"]} for item in media]
+    sizes["media"] = sum(int(item["size"] or 0) for item in media)
 
     now = datetime.now()
     elapsed_sec = None
@@ -2099,6 +2161,83 @@ def api_log_manifest_meta(payload: dict = Body(...)):
         return JSONResponse({"ok": False, "err": "failed to save mission metadata"}, status_code=500)
 
     return {"ok": True, "sid": chosen_sid, "mission": saved}
+
+@app.post("/api/log/snapshot")
+def api_log_snapshot(payload: dict = Body(...)):
+    cur = state.get("logging", {"enabled": False, "sid": None})
+    if not cur.get("enabled") or not cur.get("sid"):
+        return JSONResponse({"ok": False, "err": "logging disabled"}, status_code=400)
+
+    sid = str(cur.get("sid") or "").strip()
+    if not SID_RE.fullmatch(sid):
+        return JSONResponse({"ok": False, "err": "bad current sid"}, status_code=500)
+
+    data_url = str(payload.get("image") or "")
+    prefix = "data:image/png;base64,"
+    if not data_url.startswith(prefix):
+        return JSONResponse({"ok": False, "err": "expected PNG data URL"}, status_code=400)
+
+    try:
+        image = base64.b64decode(data_url[len(prefix):], validate=True)
+    except (binascii.Error, ValueError):
+        return JSONResponse({"ok": False, "err": "bad image data"}, status_code=400)
+
+    if len(image) < 8 or image[:8] != b"\x89PNG\r\n\x1a\n":
+        return JSONResponse({"ok": False, "err": "bad PNG data"}, status_code=400)
+    if len(image) > 8 * 1024 * 1024:
+        return JSONResponse({"ok": False, "err": "snapshot too large"}, status_code=413)
+
+    media_dir = session_media_dir(sid)
+    os.makedirs(media_dir, exist_ok=True)
+    tag = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    seq = 1
+    while seq <= 999:
+        name = f"snapshot_{tag}_{seq:03d}.png"
+        path = os.path.join(media_dir, name)
+        if not os.path.exists(path):
+            break
+        seq += 1
+    if seq > 999:
+        return JSONResponse({"ok": False, "err": "too many snapshots this second"}, status_code=500)
+
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(image)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        return JSONResponse({"ok": False, "err": "failed to write snapshot"}, status_code=500)
+
+    nav = state.get("nav") or {}
+    stream = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    evt = {
+        "ts_ms": int(state.get("last_update_ms") or int(time.time() * 1000)),
+        "mission_time": nav.get("mission_time_s"),
+        "depth": nav.get("depth_m"),
+        "heading": nav.get("heading_deg"),
+        "lat": nav.get("lat_deg"),
+        "lon": nav.get("lon_deg"),
+        "alt_m": nav.get("alt_m"),
+        "src": "SFC",
+        "type": "SNAPSHOT",
+        "text": str(payload.get("text") or "Video snapshot").strip()[:200],
+        "media": f"media/{name}",
+        "stream": {
+            "index": stream.get("index"),
+            "kind": str(stream.get("kind") or "")[:32],
+            "url": str(stream.get("url") or "")[:500],
+        },
+    }
+    ok = append_event_jsonl(evt)
+    if not ok:
+        return JSONResponse({"ok": False, "err": "snapshot saved but failed to write event log"}, status_code=500)
+
+    return {"ok": True, "sid": sid, "file": f"media/{name}", "size": len(image)}
 
 @app.get("/api/log/events_tail")
 def api_log_events_tail(sid: str | None = None, limit: int = 20):
