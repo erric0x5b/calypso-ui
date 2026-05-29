@@ -33,12 +33,6 @@
       <div id="widgets_panel" class="dropdown hidden"></div>
     </div>
   </header>
-  <div class="shutdownCorner">
-    <button id="btn_shutdown_hold" class="shutdownHoldBtn" type="button" aria-label="Vehicle shutdown hold 3 seconds">
-      <span class="shutdownHoldFill" id="shutdown_hold_fill"></span>
-      <span class="shutdownHoldText" id="shutdown_hold_text">SHUTDOWN ROV (hold 3s)</span>
-    </button>
-  </div>
   <div id="shutdown_overlay" class="shutdownOverlay hidden" aria-live="assertive">
     <div class="shutdownOverlayCard">
       <div class="shutdownOverlayTitle">Vehicle Shutdown In Progress</div>
@@ -79,24 +73,30 @@
         </div>
 
         <div class="card missionBottom">
-          <div class="cardHead">
+          <div class="cardHead powerScadaHead">
             <div class="cardTitle">Power SCADA</div>
+            <div class="powerScadaStatus" aria-live="polite">
+              <span class="pill mono" id="vmot_state">VMOT: -</span>
+              <span class="pill mono" id="vmot_cmd_ack">-</span>
+              <div class="pill mono vmotCockpitWarn hidden" id="vmot_cockpit_warn"></div>
+            </div>
           </div>
           <div class="cardBody">
             <div class="powerScadaLayout">
               <div class="powerScadaPanel">
                 <div class="vmotCtrl" id="vmot_ctrl">
-                  <div class="vmotRow">
-                    <span class="pill mono" id="vmot_state">VMOT: -</span>
-                    <span class="pill mono" id="vmot_cmd_ack">-</span>
-                  </div>
-                  <div class="pill mono vmotCockpitWarn hidden" id="vmot_cockpit_warn"></div>
                   <div class="vmotActions">
                     <button id="vmot_enable_hold" class="vmotEnableBtn" aria-label="Enable VMOT hold 3 seconds">
                       <span class="vmotEnableFill" id="vmot_enable_fill"></span>
                       <span class="vmotEnableText" id="vmot_enable_text">ENABLE VMOT (hold 3s)</span>
                     </button>
                     <button id="vmot_disable_now" class="vmotDisableBtn">DISABLE VMOT</button>
+                  </div>
+                  <div class="shutdownPanel">
+                    <button id="btn_shutdown_hold" class="shutdownHoldBtn" type="button" aria-label="Vehicle shutdown hold 3 seconds">
+                      <span class="shutdownHoldFill" id="shutdown_hold_fill"></span>
+                      <span class="shutdownHoldText" id="shutdown_hold_text">SHUTDOWN ROV (hold 3s)</span>
+                    </button>
                   </div>
                 </div>
               </div>

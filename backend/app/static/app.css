@@ -348,21 +348,18 @@ label {
   cursor: wait;
 }
 
-.shutdownCorner {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 80;
+.shutdownPanel {
+  display: grid;
+  margin-top: 2px;
 }
 
 .shutdownHoldBtn {
   position: relative;
   overflow: hidden;
-  min-width: 220px;
+  width: 100%;
   min-height: 42px;
   border-color: rgba(239, 68, 68, .42);
   background: rgba(239, 68, 68, .12);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
 }
 
 .shutdownHoldBtn:hover {
@@ -453,13 +450,8 @@ label {
     grid-area: widgets;
   }
 
-  .shutdownCorner {
-    right: 12px;
-    bottom: 12px;
-  }
-
   .shutdownHoldBtn {
-    min-width: 190px;
+    min-height: 40px;
   }
 }
 
@@ -751,7 +743,30 @@ label {
   grid-template-columns: minmax(220px, 30%) minmax(0, 1fr);
   gap: 10px;
   align-items: stretch;
-  margin-top: 10px;
+}
+
+.powerScadaHead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.powerScadaStatus {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.powerScadaStatus .pill {
+  max-width: min(100%, 520px);
+}
+
+.powerScadaStatus #vmot_cmd_ack {
+  text-align: center;
 }
 
 .powerScadaPanel {
@@ -792,6 +807,7 @@ label {
   display: grid;
   gap: 10px;
   height: 100%;
+  align-content: start;
 }
 
 .vmotRow {
@@ -837,8 +853,12 @@ label {
 
 .vmotActions {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 8px;
+}
+
+.vmotActions button {
+  white-space: nowrap;
 }
 
 .vmotEnableBtn {
@@ -1177,6 +1197,19 @@ label {
 
   .powerScadaLayout {
     grid-template-columns: 1fr;
+  }
+
+  .powerScadaHead {
+    grid-template-columns: 1fr;
+  }
+
+  .powerScadaStatus {
+    justify-content: flex-start;
+    margin-top: 8px;
+  }
+
+  .powerScadaStatus #vmot_cmd_ack {
+    min-width: 0;
   }
 
   .vmotActions {

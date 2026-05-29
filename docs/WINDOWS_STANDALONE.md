@@ -48,6 +48,19 @@ Per avviarlo senza browser:
 .\dist\CalypsoUI\CalypsoUI.exe --no-browser
 ```
 
+Per aprire la UI a schermo intero con Edge/Chrome:
+
+```powershell
+.\dist\CalypsoUI\CalypsoUI.exe --fullscreen
+```
+
+In alternativa, per abilitarlo da collegamento o installer:
+
+```powershell
+$env:CALYPSO_FULLSCREEN = "1"
+.\dist\CalypsoUI\CalypsoUI.exe
+```
+
 ## ffmpeg
 
 Se serve il proxy video RTSP, copiare `ffmpeg.exe` qui prima di creare

@@ -1,5 +1,6 @@
 import argparse
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -10,6 +11,10 @@ import uvicorn
 
 
 APP_NAME = "Calypso UI"
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _base_dir() -> Path:
@@ -46,8 +51,36 @@ def configure_standalone_environment() -> None:
         os.environ.setdefault("CALYPSO_FFMPEG_BIN", str(ffmpeg_path))
 
 
-def _open_browser_later(url: str) -> None:
+def _browser_candidates() -> list[Path]:
+    paths = []
+    for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.getenv(env_name)
+        if not base:
+            continue
+        root = Path(base)
+        paths.extend([
+            root / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            root / "Google" / "Chrome" / "Application" / "chrome.exe",
+        ])
+    return paths
+
+
+def _open_fullscreen_browser(url: str) -> bool:
+    for browser in _browser_candidates():
+        if browser.exists():
+            subprocess.Popen(
+                [str(browser), "--new-window", "--start-fullscreen", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+    return False
+
+
+def _open_browser_later(url: str, fullscreen: bool) -> None:
     time.sleep(1.0)
+    if fullscreen and _open_fullscreen_browser(url):
+        return
     webbrowser.open(url)
 
 
@@ -56,6 +89,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=os.getenv("CALYPSO_STANDALONE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("CALYPSO_HTTP_PORT", "8080")))
     parser.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically.")
+    parser.add_argument(
+        "--fullscreen",
+        action="store_true",
+        default=_env_flag("CALYPSO_FULLSCREEN"),
+        help="Open the UI in a fullscreen Edge/Chrome window when available.",
+    )
     return parser.parse_args()
 
 
@@ -65,9 +104,11 @@ def main() -> None:
     url = f"http://{args.host}:{args.port}/ui"
 
     if not args.no_browser:
-        threading.Thread(target=_open_browser_later, args=(url,), daemon=True).start()
+        threading.Thread(target=_open_browser_later, args=(url, args.fullscreen), daemon=True).start()
 
-    uvicorn.run("backend.app.main:app", host=args.host, port=args.port, log_level="info")
+    from backend.app.main import app
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

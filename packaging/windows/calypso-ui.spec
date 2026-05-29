@@ -2,9 +2,13 @@
 #   pyinstaller --clean --noconfirm packaging\windows\calypso-ui.spec
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from pathlib import Path
+import sys
 
 
 block_cipher = None
+repo_root = Path(SPECPATH).resolve().parents[1]
+sys.path.insert(0, str(repo_root))
 
 datas = []
 datas += collect_data_files("backend.app", includes=["static/**/*", "config/**/*"])
@@ -14,8 +18,8 @@ hiddenimports += collect_submodules("pymavlink.dialects")
 
 
 a = Analysis(
-    ["backend/app/standalone.py"],
-    pathex=[],
+    [str(repo_root / "backend" / "app" / "standalone.py")],
+    pathex=[str(repo_root)],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
