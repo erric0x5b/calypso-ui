@@ -221,6 +221,10 @@ export function guessKind(url) {
   const u = (url || "").toLowerCase();
   if (u.startsWith('rtsp://') || u.startsWith('rtsps://')) return 'rtsp';
   if (u.startsWith('whep://') || u.includes('/whep')) return 'webrtc';
+  try {
+    const parsed = new URL(url);
+    if (parsed.port === '8889') return 'webrtc';
+  } catch { }
   if (u.includes('.mjpg') || u.includes('mjpeg') || u.includes('axis-cgi') || u.includes('cgi')) return 'mjpeg';
   return 'video';
 }
@@ -262,7 +266,15 @@ function resolveWhepUrl(url) {
   if (raw.toLowerCase().startsWith("whep://")) {
     return `http://${raw.slice("whep://".length)}`;
   }
-  return raw;
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (!parsed.pathname.toLowerCase().endsWith("/whep")) {
+      parsed.pathname = parsed.pathname.replace(/\/$/, "") + "/whep";
+    }
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
 }
 
 function waitForIceGatheringComplete(pc, timeoutMs = 1500) {

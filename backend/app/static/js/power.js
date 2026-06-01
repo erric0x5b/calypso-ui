@@ -190,9 +190,12 @@ export function scadaSvg(s) {
   const tMain = "#eaf0ff";
   const tMuted = "#aab6d6";
 
-  const VBUS_CX = 360 + 180 / 2;
-  const PAR_CX = 360 + 180 / 2;
-  const BUS_LINK_WIDTH = 11;
+  const VBUS_X = 362;
+  const VBUS_W = 176;
+  const VBUS_CX = VBUS_X + VBUS_W / 2;
+  const PAR_CX = VBUS_CX;
+  const FRAME_STROKE_WIDTH = 2;
+  const BUS_LINK_WIDTH = 7;
   const BUS_LINK_NODE_R = 14;
 
   const row = (xL, xR, y, label, value) => `
@@ -212,7 +215,7 @@ export function scadaSvg(s) {
   };
 
   /* BAT1 box */
-  const BAT1_X = 54, BAT1_Y = 68, BAT_W = 204, BAT_H = 176;
+  const BAT1_X = 42, BAT1_Y = 68, BAT_W = 224, BAT_H = 176;
   const BAT1_L = BAT1_X + 18;
   const BAT1_R = BAT1_X + BAT_W - 18;
   const BAT1_C = BAT1_X + BAT_W/2;
@@ -220,7 +223,7 @@ export function scadaSvg(s) {
   const bat1Block = `
       <rect x = "${BAT1_X}" y = "${BAT1_Y}" width = "${BAT_W}" height = "${BAT_H}" rx = "14" ry = "14"
         class="scadaFrame ${bat1Kind === "off" ? "" : "pulse"}"
-        fill = "${BAT1_BG}" stroke = "${frameColor(bat1Kind)}" stroke-width="3"
+        fill = "${BAT1_BG}" stroke = "${frameColor(bat1Kind)}" stroke-width="${FRAME_STROKE_WIDTH}"
         ${frameFilter(bat1Kind)} />
 
       <text x="${BAT1_C}" y="${BAT1_Y+26}" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
@@ -237,7 +240,7 @@ export function scadaSvg(s) {
     `;
 
   /* BAT2 box */
-  const BAT2_X = 642, BAT2_Y = 68;
+  const BAT2_X = 634, BAT2_Y = 68;
   const BAT2_L = BAT2_X + 18;
   const BAT2_R = BAT2_X + BAT_W - 18;
   const BAT2_C = BAT2_X + BAT_W/2;
@@ -245,7 +248,7 @@ export function scadaSvg(s) {
   const bat2Block = `
       <rect x = "${BAT2_X}" y = "${BAT2_Y}" width = "${BAT_W}" height = "${BAT_H}" rx = "14" ry = "14"
       class="scadaFrame ${bat2Kind === "off" ? "" : "pulse"}"
-      fill = "${BAT2_BG}" stroke = "${frameColor(bat2Kind)}" stroke-width="3"
+      fill = "${BAT2_BG}" stroke = "${frameColor(bat2Kind)}" stroke-width="${FRAME_STROKE_WIDTH}"
       ${frameFilter(bat2Kind)} />
 
       <text x="${BAT2_C}" y="${BAT2_Y+26}" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
@@ -263,7 +266,7 @@ export function scadaSvg(s) {
 
   return `
   
-  <svg viewBox="0 0 900 380" preserveAspectRatio="xMidYMid meet">
+  <svg viewBox="0 0 900 292" preserveAspectRatio="xMidYMid meet">
     <defs>
       <style>
         .scadaFrame { stroke-linejoin: round; }
@@ -324,10 +327,10 @@ export function scadaSvg(s) {
     ${bat2Block}  
 
     <!-- VBUS box (center) -->
-    <rect x="372" y="104" width="156" height="76" rx="14" ry="14"
+    <rect x="${VBUS_X}" y="104" width="${VBUS_W}" height="76" rx="14" ry="14"
       fill="rgba(255,255,255,0.04)"
       class="scadaFrame ${vbusKind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(vbusKind)}" stroke-width="3"
+      stroke="${frameColor(vbusKind)}" stroke-width="${FRAME_STROKE_WIDTH}"
       ${frameFilter(vbusKind)} />
 
     <text x="${VBUS_CX}" y="130" font-size="15" font-weight="900" fill="${tMain}" text-anchor="middle">VBUS</text>
@@ -336,27 +339,27 @@ export function scadaSvg(s) {
       ${fault ? `FAULT (PWR ${reason}, VMOT ${vmotReason}${dvBad ? `, dV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"} - ${parStateTxt}`}
     </text>
     <!-- Lines -->
-    <rect x="258" y="${142 - BUS_LINK_WIDTH / 2}" width="114" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
+    <rect x="${BAT1_X + BAT_W}" y="${142 - BUS_LINK_WIDTH / 2}" width="${VBUS_X - (BAT1_X + BAT_W)}" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link1Kind)}"
       ${frameFilter(link1Kind)} />
-    <circle cx="315" cy="142" r="${BUS_LINK_NODE_R}"
+    <circle cx="${(BAT1_X + BAT_W + VBUS_X) / 2}" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link1Kind)}" ${frameFilter(link1Kind)} />
 
-    <rect x="528" y="${142 - BUS_LINK_WIDTH / 2}" width="114" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
+    <rect x="${VBUS_X + VBUS_W}" y="${142 - BUS_LINK_WIDTH / 2}" width="${BAT2_X - (VBUS_X + VBUS_W)}" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link2Kind)}"
       ${frameFilter(link2Kind)} />
-    <circle cx="585" cy="142" r="${BUS_LINK_NODE_R}"
+    <circle cx="${(VBUS_X + VBUS_W + BAT2_X) / 2}" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link2Kind)}" ${frameFilter(link2Kind)} />
 
     <!-- Parallel badge -->
-    <rect x="372" y="220" width="156" height="42" rx="21" ry="21"
+    <rect x="${VBUS_X}" y="220" width="${VBUS_W}" height="42" rx="21" ry="21"
       fill="rgba(255,255,255,0.04)"
       class="scadaFrame ${parKind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(parKind)}" stroke-width="3"
+      stroke="${frameColor(parKind)}" stroke-width="${FRAME_STROKE_WIDTH}"
       ${frameFilter(parKind)} />
 
     <text x="${PAR_CX}" y="246" font-size="14" font-weight="900" fill="${frameColor(parKind)}" text-anchor="middle">

@@ -1,8 +1,8 @@
 import * as utils from './utils.js?v=17';
-import { scadaSvg } from './power.js?v=12';
+import { scadaSvg } from './power.js?v=14';
 import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js?v=21';
+import * as video from './video.js?v=22';
 import * as logs from './logs.js';
 
 let snapshot = null;
