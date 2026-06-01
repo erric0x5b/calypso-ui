@@ -3,10 +3,15 @@ import { scadaSvg } from './power.js?v=12';
 import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
 import * as video from './video.js?v=21';
-import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
 let snapshot = null;
+let th3 = {
+    degToRad: (d) => (d || 0) * Math.PI / 180,
+    setRovAttitudeRad: () => {},
+    ensure3D: () => {},
+};
+let th3LoadPromise = null;
 let missionRefreshTimer = null;
 let diagnosticsRefreshTimer = null;
 let missionTabWired = false;
@@ -78,6 +83,27 @@ const SONAR_RESOLUTION_PRESETS = {
 const SONAR_PALETTE_PRESETS = ["jet", "parula", "copper", "bw"];
 
 const TAB_ORDER = ["vehicle", "mission", "video", "sonar", "diagnostics", "setup"];
+
+function loadThree3D() {
+    if (!th3LoadPromise) {
+        th3LoadPromise = import('./three3d.js')
+            .then((mod) => {
+                th3 = mod;
+                return mod;
+            })
+            .catch((err) => {
+                console.warn("3D module disabled:", err);
+                return null;
+            });
+    }
+    return th3LoadPromise;
+}
+
+function ensure3DSafe() {
+    loadThree3D().then((mod) => {
+        if (mod && typeof mod.ensure3D === "function") mod.ensure3D();
+    });
+}
 const GP_ACTIONS = [
     { key: "tab_prev", label: "Tab precedente", def: 14 },
     { key: "tab_next", label: "Tab successivo", def: 15 },
@@ -2728,7 +2754,7 @@ function renderMainSlot(tab) {
     if (suw)
         suw.classList.toggle('hidden', tab !== 'setup');
     if (tab === 'vehicle') {
-        th3.ensure3D();
+        ensure3DSafe();
         return;
     }
     if (tab === 'mission') {
@@ -2759,7 +2785,7 @@ function renderMainMission() {
     if (!slot)
         return;
     slot.innerHTML = `...`;
-    th3.ensure3D();
+    ensure3DSafe();
 }
 
 function setupTabs() {
