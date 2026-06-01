@@ -88,6 +88,9 @@ const VMOT_REASON_MAP = {
   101: { label: "VMOT_REASON_CH1_RDY_FAIL", meaning: "CH1 acceso ma VMotRdy non valido." },
   102: { label: "VMOT_REASON_CH2_RDY_FAIL", meaning: "CH2 acceso ma VMotRdy non valido." },
   103: { label: "VMOT_REASON_CH3_RDY_FAIL", meaning: "CH3 acceso ma VMotRdy non valido." },
+  201: { label: "VMOT_REASON_CH1_RDY_UNCOMMANDED", meaning: "CH1 segnala RDY mentre il comando INP e OFF." },
+  202: { label: "VMOT_REASON_CH2_RDY_UNCOMMANDED", meaning: "CH2 segnala RDY mentre il comando INP e OFF." },
+  203: { label: "VMOT_REASON_CH3_RDY_UNCOMMANDED", meaning: "CH3 segnala RDY mentre il comando INP e OFF." },
 };
 
 export function powerReasonInfo(v) {

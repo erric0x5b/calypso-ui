@@ -3,7 +3,7 @@
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.6",
+        "version": "0.4.12",
         "new_page": true,                   
         "avoid_iframes": true,            
         "works_in_relative_paths": true,   

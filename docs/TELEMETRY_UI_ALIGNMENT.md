@@ -22,6 +22,22 @@ This document summarizes telemetry currently emitted by firmware (`Engine`) for 
 - `ACK`: on command reception (`CMD`).
 - Light status poll: 1 Hz on each pod RS485 bus when no recent SFC light command is being bridged and connected light IDs have been configured.
 
+Peer-to-peer traffic is intentionally reduced compared with SFC telemetry:
+
+- `ENV` peer copy: 2 Hz (`PEER_ENV_PERIOD_MS=500 ms`).
+- `PWR` peer copy: 5 Hz (`PEER_PWR_PERIOD_MS=200 ms`, reduced payload with `BusConn` only).
+- `HB` is sent to SFC only; peer liveness is maintained by valid peer `ENV`/`PWR` and any other valid peer frame.
+
+## Node liveness and offline rule
+
+Use one liveness rule for `BAT1` and `BAT2`:
+
+- Any valid NMEA v2 UDP frame from a node (`SRC=BAT1` or `SRC=BAT2`, valid CRC, `ver=2`) refreshes that node liveness timestamp.
+- `HB` is the nominal heartbeat at 1 Hz, but it is not the only liveness source. `ENV`, `PWR`, `ESC`, `ALM`, `CAPS`, and `ACK` also prove that the node is online when received as valid frames.
+- A node is offline when no valid frame from that node has been received for `3000 ms`.
+- Do not mark a node offline because of a single missed `HB` while other valid frames from the same `SRC` are still arriving.
+- Firmware uses the same `3000 ms` peer-liveness threshold for `PeerLost`; `PeerLost` is raised when the opposite pod has not produced any valid peer frame within that window.
+
 ## Messages to SFC
 
 ## `HB` (heartbeat)
@@ -83,6 +99,7 @@ Payload keys:
 | `Reason` | u32 | enum | PowerSM reason code (state decision). |
 | `VmotReason` | u32 | enum | VMOT sequence/fault reason code. |
 | `InaFault` | u8 | bool | Summary fault flag from the Power Switch INA238 diagnostic register. |
+| `VmotSwitchShort` | u8 | bool | A VMOT RDY input is active while the corresponding INP command is OFF. |
 | `Vmot1On..Vmot3On` | u8 | bool | Present when `SRC=BAT1`. |
 | `Vmot4On..Vmot6On` | u8 | bool | Present when `SRC=BAT2`. |
 
@@ -126,6 +143,9 @@ Payload keys:
 | 101 | `VMOT_REASON_CH1_RDY_FAIL` |
 | 102 | `VMOT_REASON_CH2_RDY_FAIL` |
 | 103 | `VMOT_REASON_CH3_RDY_FAIL` |
+| 201 | `VMOT_REASON_CH1_RDY_UNCOMMANDED` |
+| 202 | `VMOT_REASON_CH2_RDY_UNCOMMANDED` |
+| 203 | `VMOT_REASON_CH3_RDY_UNCOMMANDED` |
 
 ### `InaFault` details
 
@@ -178,6 +198,8 @@ Payload keys:
 | `Latched` | u8 | bool | Sticky latch status (1/0). |
 | `Text` | string | - | Short source text (CSV-safe sanitized). |
 
+For `ALM_PEER_LOST` (`Id=110`), `Active=0,Latched=0` means `PeerLost` has cleared. The UI must treat repeated clear frames as the same returned condition, not as a new active warning.
+
 Stable alarm IDs:
 
 | Id | Name |
@@ -190,6 +212,7 @@ Stable alarm IDs:
 | 300 | `ALM_VBUS_LOW` |
 | 310 | `ALM_DV_HIGH` |
 | 320 | `ALM_PWR_FAULT` |
+| 330 | `ALM_VMOT_SWITCH_SHORT` |
 | 400 + `vesc_id` | `ALM_VESC_LOST_BASE + vesc_id` |
 
 ## `ACK` (command response, useful for UI command workflows)
@@ -395,4 +418,4 @@ Behavior:
   - BAT1: `Vmot1On`,`Vmot2On`,`Vmot3On`
   - BAT2: `Vmot4On`,`Vmot5On`,`Vmot6On`
 - `ALM` should be handled as event stream (edge + periodic repeats), not as full-state snapshot.
-- For state badges, `HB.NodeState` is the synthesized node health indicator.
+- For online state badges, `HB.NodeState` is the synthesized node health indicator. Offline state is derived from the node liveness rule above.

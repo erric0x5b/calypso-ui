@@ -81,7 +81,7 @@ LIGHT_FAULT_BITS = [
 ]
 
 LOG_DIR = os.getenv("CALYPSO_LOG_DIR", "/data/deepex_logs")
-OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "5000"))
+OFFLINE_MS = int(os.getenv("CALYPSO_OFFLINE_MS", "3000"))
 AUTOLOG_ENABLED_DEFAULT = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
 AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
@@ -140,7 +140,7 @@ def register_service():
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.10",
+        "version": "0.4.12",
         "new_page": True,
         "avoid_iframes": True,
         "works_in_relative_paths": True,

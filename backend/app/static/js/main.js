@@ -31,6 +31,7 @@ let alarmPrevActiveKeys = null;
 let alarmBeepCtx = null;
 let alarmBeepCooldownUntil = 0;
 let alarmAudioUnlockWired = false;
+let alarmFirstSeenMs = new Map();
 let vmotHoldTimer = null;
 let vmotHoldActive = false;
 let vmotHoldStartMs = 0;
@@ -56,6 +57,7 @@ const SHUTDOWN_HOLD_MS = 3000;
 const VMOT_ACK_TIMEOUT_MS = 3000;
 const VMOT_ACK_POLL_MS = 120;
 const STROBO_ACK_TIMEOUT_MS = 3000;
+const ALARM_DISPLAY_GRACE_MS = 2000;
 const ALARM_FILTERS = new Set(["all", "crit", "error", "warn"]);
 const SONAR_CFG_FIELDS = [
     "host",
@@ -132,7 +134,7 @@ const ALARM_GUIDE_BY_ID = {
     },
     110: {
         label: "ALM_PEER_LOST",
-        meaning: "Heartbeat nodo peer non ricevuto entro timeout.",
+        meaning: "Nessun frame valido dal nodo peer entro timeout.",
         action: "Verifica link tra BAT1/BAT2, alimentazione peer e stato rete."
     },
     120: {
@@ -165,9 +167,14 @@ const ALARM_GUIDE_BY_ID = {
         meaning: "Fault logica power switch/PowerSM o driver VMOT.",
         action: "Leggi Reason, VmotReason e InaFault; se VmotReason=2 verifica il driver VMOT prima del re-enable."
     },
+    330: {
+        label: "ALM_VMOT_SWITCH_SHORT",
+        meaning: "Un ingresso VMOT RDY risulta attivo mentre il relativo comando INP e OFF.",
+        action: "Verifica cablaggio/driver VMOT e non riabilitare finche la causa non e rimossa."
+    },
     9001: {
         label: "NODE_OFFLINE",
-        meaning: "Nodo offline: heartbeat assente oltre la soglia OFFLINE_MS.",
+        meaning: "Nodo offline: nessun frame valido oltre la soglia OFFLINE_MS.",
         action: "Controlla alimentazione nodo, link comunicazione e riavvio modulo."
     },
 };
@@ -226,11 +233,12 @@ const DIAG_ALARM_CATALOG = [
     { key: "300", id: 300, label: "ALM_VBUS_LOW", description: "VBUS sotto soglia." },
     { key: "310", id: 310, label: "ALM_DV_HIGH", description: "Delta tensione batterie troppo alto." },
     { key: "320", id: 320, label: "ALM_PWR_FAULT", description: "Fault logica power switch o driver VMOT." },
+    { key: "330", id: 330, label: "ALM_VMOT_SWITCH_SHORT", description: "VMOT RDY attivo con comando INP spento." },
     { key: "400", label: "ALM_VESC_LOST", description: "Telemetria persa su ESC specifico.", match: (a) => {
         const id = Number(a?.id);
         return (Number.isFinite(id) && id >= 401 && id <= 499) || /VESC_LOST|ESC/i.test(String(a?.text || ""));
     } },
-    { key: "9001", id: 9001, label: "NODE_OFFLINE", description: "Nodo senza heartbeat oltre soglia." },
+    { key: "9001", id: 9001, label: "NODE_OFFLINE", description: "Nodo senza frame validi oltre soglia." },
     { key: "BUSCONN", label: "BUSCONN_OFF", description: "POD online ma non collegato al bus.", match: (a) => /BUSCONN|BUS OFF|BUS OFFLINE/i.test(String(a?.text || "")) },
     { key: "VMOT", label: "VMOT_FAULT", description: "Fault o blocco sequenza VMOT.", match: (a) => /VMOT|MOTOR/i.test(String(a?.text || "")) },
     { key: "LGT0", label: "LGT_OPENLED", description: "Fault pin OPENLED attivo.", lightFault: "OPENLED" },
@@ -383,6 +391,31 @@ function alarmKey(a) {
     return `${src}|${id}|${text}`;
 }
 
+function alarmSilenceMap() {
+    if (!uiPrefs.silencedAlarms || typeof uiPrefs.silencedAlarms !== "object" || Array.isArray(uiPrefs.silencedAlarms)) {
+        uiPrefs.silencedAlarms = {};
+    }
+    return uiPrefs.silencedAlarms;
+}
+
+function isAlarmSilenced(alarm) {
+    return !!alarmSilenceMap()[alarmKey(alarm)];
+}
+
+function debounceActiveAlarms(alarms) {
+    const now = Date.now();
+    const active = Array.isArray(alarms) ? alarms : [];
+    const activeKeys = new Set(active.map(alarmKey));
+    for (const key of Array.from(alarmFirstSeenMs.keys())) {
+        if (!activeKeys.has(key)) alarmFirstSeenMs.delete(key);
+    }
+    return active.filter((alarm) => {
+        const key = alarmKey(alarm);
+        if (!alarmFirstSeenMs.has(key)) alarmFirstSeenMs.set(key, now);
+        return (now - Number(alarmFirstSeenMs.get(key) || now)) >= ALARM_DISPLAY_GRACE_MS;
+    });
+}
+
 function ensureAlarmAudioUnlock() {
     if (alarmAudioUnlockWired) return;
     alarmAudioUnlockWired = true;
@@ -497,8 +530,10 @@ function isCanDeviceAlarm(alarm) {
 
 function visibleActiveAlarms(state) {
     const active = Array.isArray(state?.alarms_active) ? state.alarms_active : [];
-    if (anyVmotOn(state)) return active;
-    return active.filter((alarm) => !isCanDeviceAlarm(alarm));
+    const debounced = debounceActiveAlarms(active);
+    const unsilenced = debounced.filter((alarm) => !isAlarmSilenced(alarm));
+    if (anyVmotOn(state)) return unsilenced;
+    return unsilenced.filter((alarm) => !isCanDeviceAlarm(alarm));
 }
 
 function renderVmotState(state) {
@@ -1004,9 +1039,74 @@ function filterAlarms(list) {
     return arr.filter((alarm) => alarmMatchesFilter(alarm, filter));
 }
 
+function filterSilencedAlarms(list) {
+    const arr = Array.isArray(list) ? list : [];
+    return arr.filter((alarm) => !isAlarmSilenced(alarm));
+}
+
+function alarmIsActive(alarm) {
+    return Number(alarm?.active ?? 1) !== 0;
+}
+
+function alarmTs(alarm) {
+    const ts = Number(alarm?.ts_ms);
+    return Number.isFinite(ts) ? ts : null;
+}
+
+function filterAlarmHistoryGrace(list, nowTs = null) {
+    const arr = Array.isArray(list) ? list : [];
+    const suppress = new Set();
+    const lastActive = new Map();
+    const now = Number(nowTs);
+    const hasNow = Number.isFinite(now);
+
+    arr.forEach((alarm, index) => {
+        const key = alarmKey(alarm);
+        const ts = alarmTs(alarm);
+        if (alarmIsActive(alarm)) {
+            lastActive.set(key, { index, ts });
+            if (hasNow && ts != null && Math.max(0, now - ts) < ALARM_DISPLAY_GRACE_MS) {
+                suppress.add(index);
+            }
+            return;
+        }
+
+        const active = lastActive.get(key);
+        if (!active || active.ts == null || ts == null) {
+            suppress.add(index);
+            return;
+        }
+
+        const activeDuration = Math.max(0, ts - active.ts);
+        if (activeDuration < ALARM_DISPLAY_GRACE_MS) {
+            suppress.add(active.index);
+            suppress.add(index);
+        }
+    });
+
+    return arr.filter((_, index) => !suppress.has(index));
+}
+
+function compactAlarmHistoryForPanel(list) {
+    const arr = Array.isArray(list) ? list : [];
+    const seenClears = new Set();
+    const out = [];
+    for (const alarm of [...arr].reverse()) {
+        if (!alarmIsActive(alarm)) {
+            const key = alarmKey(alarm);
+            if (seenClears.has(key)) continue;
+            seenClears.add(key);
+        }
+        out.push(alarm);
+        if (out.length >= 10) break;
+    }
+    return out;
+}
+
 function renderAlarmItem(alarm, opts = {}) {
-    const sev = utils.sevLabel(alarm?.sev);
-    const sevClass = utils.sevClass(alarm?.sev);
+    const isActive = alarmIsActive(alarm);
+    const sev = isActive ? utils.sevLabel(alarm?.sev) : "RIENTRATO";
+    const sevClass = isActive ? utils.sevClass(alarm?.sev) : "ok";
     const latch = Number(alarm?.latched) === 1 ? "LAT" : "TRN";
     const idTxt = (alarm?.id == null ? "-" : String(alarm.id));
     const srcTxt = String(alarm?.src || "-");
@@ -1014,13 +1114,15 @@ function renderAlarmItem(alarm, opts = {}) {
     const guide = resolveAlarmGuide(alarm);
     const typeTxt = guide?.label || parsed.type || "Alarm";
     const detailTxt = parsed.detail || "";
-    const metaTxt = `ID ${idTxt} | ${latch} | SRC ${srcTxt}`;
+    const metaTxt = `ID ${idTxt} | ${latch} | SRC ${srcTxt} | ${isActive ? "ACTIVE" : "CLEAR"}`;
     const extraClass = opts.history ? " alarmItemHist" : "";
+    const silenceBtn = `<button type="button" class="alarmSilenceBtn" data-alarm-silence="${escapeHtml(alarmKey(alarm))}">Silenzia</button>`;
 
     return `<div class="alarmItem ${sevClass}${extraClass}">
         <div class="alarmItemHead">
             <span class="alarmItemSev">${sev}</span>
             <span class="alarmItemType">${escapeHtml(typeTxt)}</span>
+            ${silenceBtn}
         </div>
         ${detailTxt ? `<div class="alarmItemDetail mono">${escapeHtml(detailTxt)}</div>` : ""}
         <div class="alarmItemMeta mono">${escapeHtml(metaTxt)}</div>
@@ -1046,6 +1148,14 @@ function applyAlarmPanelPrefs() {
     if (histToggle) {
         histToggle.setAttribute("aria-label", uiPrefs.alarmHistoryCollapsed ? "Mostra ultimi 10" : "Nascondi ultimi 10");
     }
+
+    const unsilence = document.getElementById("alarms_unsilence_all");
+    if (unsilence) {
+        const count = Object.keys(alarmSilenceMap()).length;
+        unsilence.textContent = count ? `Mostra silenziati (${count})` : "Mostra silenziati";
+        unsilence.disabled = count === 0;
+        unsilence.classList.toggle("is-active", count > 0);
+    }
 }
 
 function setupAlarmPanelControls() {
@@ -1062,6 +1172,29 @@ function setupAlarmPanelControls() {
             uiPrefs.alarmFilter = filter;
             saveUiPrefs(uiPrefs);
             applyAlarmPanelPrefs();
+            if (snapshot) render(snapshot);
+        });
+    }
+
+    for (const boxId of ["alarms_active", "alarms_hist"]) {
+        const box = document.getElementById(boxId);
+        if (!box) continue;
+        box.addEventListener("click", (ev) => {
+            const btn = ev.target.closest("[data-alarm-silence]");
+            if (!btn) return;
+            const key = btn.getAttribute("data-alarm-silence");
+            if (!key) return;
+            alarmSilenceMap()[key] = true;
+            saveUiPrefs(uiPrefs);
+            if (snapshot) render(snapshot);
+        });
+    }
+
+    const unsilenceAll = document.getElementById("alarms_unsilence_all");
+    if (unsilenceAll) {
+        unsilenceAll.addEventListener("click", () => {
+            uiPrefs.silencedAlarms = {};
+            saveUiPrefs(uiPrefs);
             if (snapshot) render(snapshot);
         });
     }
@@ -1623,7 +1756,7 @@ function cameraDiagnosticRows() {
 }
 
 function diagAlarmActive(a) {
-    return Number(a?.active ?? 1) !== 0;
+    return alarmIsActive(a);
 }
 
 function diagAlarmMatches(def, alarm) {
@@ -2014,10 +2147,13 @@ function render(state) {
     utils.setHTML("esc", ehtml);
 
     const aa = filterAlarms(visibleActiveAlarms(state));
-    const hist = filterAlarms(state.alarms_history || []).slice(-10).reverse();
+    const hist = compactAlarmHistoryForPanel(filterAlarms(filterSilencedAlarms(
+        filterAlarmHistoryGrace(state.alarms_history || [], state.last_update_ms)
+    )));
+    const silencedCount = Object.keys(alarmSilenceMap()).length;
     utils.setHTML("alarms_active", aa.length
         ? `<div class="alarmList">${aa.map((a) => renderAlarmItem(a)).join("")}</div>`
-        : `<div class="ok">none</div>`);
+        : `<div class="ok">none${silencedCount ? ` (${silencedCount} silenziati)` : ""}</div>`);
     utils.setHTML("alarms_hist", hist.length
         ? `<div class="alarmList">${hist.map((a) => renderAlarmItem(a, { history: true })).join("")}</div>`
         : `<div class="ok">none</div>`);
@@ -2278,6 +2414,7 @@ uiPrefs.showLightsAck ??= true;
 uiPrefs.showAlarmBeep ??= true;
 uiPrefs.alarmFilter ??= "all";
 uiPrefs.alarmHistoryCollapsed ??= true;
+uiPrefs.silencedAlarms ??= {};
 uiPrefs.inputSource ??= INPUT_SOURCE_BROKER;
 uiPrefs.gamepadIndex ??= -1;
 uiPrefs.sonarHeadingLock ??= false;

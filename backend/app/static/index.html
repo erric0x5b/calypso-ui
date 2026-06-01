@@ -465,6 +465,7 @@
               <button type="button" class="alarmFilterBtn" data-alarm-filter="error">Error</button>
               <button type="button" class="alarmFilterBtn" data-alarm-filter="warn">Warning</button>
             </div>
+            <button type="button" id="alarms_unsilence_all" class="alarmFilterBtn">Mostra silenziati</button>
           </div>
           <div class="alarmSectionHead">
             <b>Active</b>
@@ -572,15 +573,16 @@
         <table>
           <tr><th>ID / Pattern</th><th>Cosa significa</th><th>Azione consigliata</th></tr>
           <tr><td>100 I2C_ERROR</td><td>Errore comunicazione I2C locale.</td><td>Verifica bus I2C e periferiche collegate.</td></tr>
-          <tr><td>110 PEER_LOST</td><td>Nodo peer non raggiungibile.</td><td>Controlla heartbeat peer e link BAT1-BAT2.</td></tr>
+          <tr><td>110 PEER_LOST</td><td>Nodo peer non raggiungibile.</td><td>Controlla frame validi dal peer e link BAT1-BAT2.</td></tr>
           <tr><td>120 CAN_BUS</td><td>Anomalia bus CAN.</td><td>Controlla terminazioni, cablaggio e ESC.</td></tr>
           <tr><td>200 LEAK</td><td>Leak sensor attivo.</td><td>Metti in sicurezza il ROV e verifica infiltrazioni.</td></tr>
           <tr><td>210 OVERTEMP</td><td>Temperatura oltre soglia.</td><td>Riduci carico e controlla dissipazione.</td></tr>
           <tr><td>300 VBUS_LOW</td><td>VBUS sotto soglia.</td><td>Controlla batterie, carico e potenza.</td></tr>
           <tr><td>310 DV_HIGH</td><td>Delta tensione batterie troppo alto.</td><td>Non forzare parallelo, equalizza batterie.</td></tr>
           <tr><td>320 PWR_FAULT</td><td>Fault logica power switch o driver VMOT.</td><td>Leggi Reason, VmotReason e InaFault; con VmotReason=2 verifica il driver VMOT.</td></tr>
+          <tr><td>330 VMOT_SWITCH_SHORT</td><td>VMOT RDY attivo con comando INP spento.</td><td>Verifica cablaggio/driver VMOT prima del re-enable.</td></tr>
           <tr><td>400+id VESC_LOST</td><td>Telemetria persa su ESC specifico.</td><td>Verifica ESC indicato, CAN e alimentazione.</td></tr>
-          <tr><td>NODE_OFFLINE:BAT1/BAT2</td><td>Nodo senza heartbeat oltre OFFLINE_MS.</td><td>Verifica alimentazione POD e link comunicazione.</td></tr>
+          <tr><td>NODE_OFFLINE:BAT1/BAT2</td><td>Nodo senza frame validi oltre OFFLINE_MS.</td><td>Verifica alimentazione POD e link comunicazione.</td></tr>
           <tr><td>BusConn OFF (POD online)</td><td>POD attivo ma non collegato al bus.</td><td>Controlla contattori, comandi bus e protezioni.</td></tr>
           <tr><td>FAULT power/VMOT (Reason=900 o VmotReason!=0)</td><td>Fault logica power o sequenza VMOT.</td><td>Leggi Reason/VmotReason e ripristina la condizione prima del re-enable.</td></tr>
           <tr><td>LGT_* fault</td><td>Bitmask fault riportata da un faro.</td><td>Apri Diagnostica, identifica LGT/bit e verifica bus, temperatura e alimentazione.</td></tr>
@@ -616,6 +618,9 @@
           <tr><td>101</td><td>VMOT_REASON_CH1_RDY_FAIL</td><td>CH1 acceso ma VMotRdy non valido.</td></tr>
           <tr><td>102</td><td>VMOT_REASON_CH2_RDY_FAIL</td><td>CH2 acceso ma VMotRdy non valido.</td></tr>
           <tr><td>103</td><td>VMOT_REASON_CH3_RDY_FAIL</td><td>CH3 acceso ma VMotRdy non valido.</td></tr>
+          <tr><td>201</td><td>VMOT_REASON_CH1_RDY_UNCOMMANDED</td><td>CH1 segnala RDY mentre INP e OFF.</td></tr>
+          <tr><td>202</td><td>VMOT_REASON_CH2_RDY_UNCOMMANDED</td><td>CH2 segnala RDY mentre INP e OFF.</td></tr>
+          <tr><td>203</td><td>VMOT_REASON_CH3_RDY_UNCOMMANDED</td><td>CH3 segnala RDY mentre INP e OFF.</td></tr>
         </table>
         <div style="margin-top:10px;"><b>Fault fari</b></div>
         <table>

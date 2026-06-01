@@ -206,6 +206,22 @@ def parse_int_mask(value) -> int:
         return 0
 
 
+def parse_bool01(value, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if value is None:
+        return 1 if default else 0
+    try:
+        return 1 if int(value) != 0 else 0
+    except Exception:
+        tok = str(value).strip().lower()
+        if tok in ("1", "true", "on", "yes", "active"):
+            return 1
+        if tok in ("0", "false", "off", "no", "clear", "inactive"):
+            return 0
+        return 1 if default else 0
+
+
 def update_light_faults(ts_ms, src: str, light_id: int, fault_mask: int) -> None:
     lights = state.setdefault("lights", {})
     active = lights.setdefault("faults_active", {})
@@ -507,8 +523,15 @@ def update_state(parsed: dict):
         state["nodes"][src] = {}
     state["nodes"][src]["last_rx_ms"] = ts
 
-    # optional: save kv as hb
-    state["nodes"][src].update({"hb": kv})
+    if src in state["pods"]:
+        now_monotonic_ms = int(time.monotonic() * 1000)
+        state["nodes"][src]["last_seen_monotonic_ms"] = now_monotonic_ms
+        state["nodes"][src]["last_rx_monotonic_ms"] = now_monotonic_ms
+        state["nodes"][src]["online"] = True
+        state["pods"][src]["online"] = True
+
+    if msg == "HB":
+        state["nodes"][src].update({"hb": kv})
 
     if msg == "HB":
         up_raw = kv.get("Up", 1)
@@ -518,7 +541,6 @@ def update_state(parsed: dict):
             up = str(up_raw).strip().lower() not in ("0", "false", "off", "no")
         state["nodes"][src]["online"] = up
         state["nodes"][src]["last_hb_ms"] = ts
-        state["nodes"][src]["last_seen_monotonic_ms"] = int(time.monotonic() * 1000)
         if src in state["pods"]:
             state["pods"][src]["online"] = up
 
@@ -603,18 +625,20 @@ def update_state(parsed: dict):
         return
 
     if msg == "ALM":
+        active = parse_bool01(kv.get("Active", 1), default=1)
+        latched = parse_bool01(kv.get("Latched", 0), default=0)
         alarm = {
             "ts_ms": ts,
             "src": src,
             "id": kv.get("Id"),
             "sev": kv.get("Sev"),
-            "active": kv.get("Active", 1),
-            "latched": kv.get("Latched", 0),
+            "active": active,
+            "latched": latched,
             "text": kv.get("Text") or kv.get("TextB64"),
         }
         state["alarms_history"].append(alarm)
         append_alarm_csv(alarm)
-        if alarm["active"]:
+        if active:
             state["alarms_active"] = [a for a in state["alarms_active"] if not (a.get("id") == alarm["id"] and a.get("src") == src)]
             state["alarms_active"].append(alarm)
         else:
