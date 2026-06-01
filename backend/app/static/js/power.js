@@ -1,4 +1,4 @@
-import { fmtV, fmtA, fmtC, parStateLabel, vmotReasonLabel } from "./utils.js?v=16";
+import { fmtV, fmtA, fmtC, parStateLabel, vmotReasonLabel } from "./utils.js?v=17";
 
 function normalizeOnline(...vals) {
   for (const raw of vals) {
@@ -192,17 +192,17 @@ export function scadaSvg(s) {
 
   const VBUS_CX = 360 + 180 / 2;
   const PAR_CX = 360 + 180 / 2;
-  const BUS_LINK_WIDTH = 14;
-  const BUS_LINK_NODE_R = 11;
+  const BUS_LINK_WIDTH = 11;
+  const BUS_LINK_NODE_R = 14;
 
   const row = (xL, xR, y, label, value) => `
-    <text x="${xL}" y="${y}" font-size="12" fill="${tMuted}">${label}</text>
-    <text x="${xR}" y="${y}" font-size="12" fill="${tMain}" text-anchor="end">${value}</text>
+    <text x="${xL}" y="${y}" font-size="14" font-weight="700" fill="${tMuted}">${label}</text>
+    <text x="${xR}" y="${y}" font-size="14" font-weight="800" fill="${tMain}" text-anchor="end">${value}</text>
   `;
 
   const ledDot = (cx, cy, on, label) => `
     <circle cx="${cx}" cy="${cy}" r="6" fill="${led(on)}" />
-    <text x="${cx + 12}" y="${cy + 4}" font-size="11" fill="${tMuted}">${label}</text>
+    <text x="${cx + 12}" y="${cy + 4}" font-size="12" font-weight="700" fill="${tMuted}">${label}</text>
   `;
 
   const podBg = (online, busConn) => {
@@ -223,14 +223,14 @@ export function scadaSvg(s) {
         fill = "${BAT1_BG}" stroke = "${frameColor(bat1Kind)}" stroke-width="3"
         ${frameFilter(bat1Kind)} />
 
-      <text x="${BAT1_C}" y="${BAT1_Y+26}" font-size="13" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
+      <text x="${BAT1_C}" y="${BAT1_Y+26}" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">BAT1</text>
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 49, "Vbatt", vb1) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 67, "Ibatt", ib1) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 85, socEst1 ? "SOC est" : "SOC", soc1View) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 103, "Temp", tb1) }
       ${ row(BAT1_L, BAT1_R, BAT1_Y + 121, "BusConn", (c1 ? "ON" : "OFF")) }
 
-      <text x="${BAT1_L}" y="${BAT1_Y+142}" font-size="11" font-weight="900" fill="${tMain}">VMOT</text>
+      <text x="${BAT1_L}" y="${BAT1_Y+142}" font-size="13" font-weight="900" fill="${tMain}">VMOT</text>
       ${ ledDot(BAT1_L + 8, BAT1_Y + 158, v1, "VMOT1") }
       ${ ledDot(BAT1_L + 70, BAT1_Y + 158, v2, "VMOT2") }
       ${ ledDot(BAT1_L + 132, BAT1_Y + 158, v3, "VMOT3") }
@@ -248,14 +248,14 @@ export function scadaSvg(s) {
       fill = "${BAT2_BG}" stroke = "${frameColor(bat2Kind)}" stroke-width="3"
       ${frameFilter(bat2Kind)} />
 
-      <text x="${BAT2_C}" y="${BAT2_Y+26}" font-size="13" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
+      <text x="${BAT2_C}" y="${BAT2_Y+26}" font-size="16" font-weight="900" fill="${tMain}" text-anchor="middle">BAT2</text>
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 49, "Vbatt", vb2) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 67, "Ibatt", ib2) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 85, socEst2 ? "SOC est" : "SOC", soc2View) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 103, "Temp", tb2) }
       ${ row(BAT2_L, BAT2_R, BAT2_Y + 121, "BusConn", (c2 ? "ON" : "OFF")) }
 
-      <text x="${BAT2_L}" y="${BAT2_Y+142}" font-size="11" font-weight="900" fill="${tMain}">VMOT</text>
+      <text x="${BAT2_L}" y="${BAT2_Y+142}" font-size="13" font-weight="900" fill="${tMain}">VMOT</text>
       ${ ledDot(BAT2_L + 8, BAT2_Y + 158, v4, "VMOT4") }
       ${ ledDot(BAT2_L + 70, BAT2_Y + 158, v5, "VMOT5") }
       ${ ledDot(BAT2_L + 132, BAT2_Y + 158, v6, "VMOT6") }
@@ -275,9 +275,9 @@ export function scadaSvg(s) {
           100% { stroke-opacity: 0.55; }
         }
         @keyframes linkPulse {
-          0% { opacity: 0.55; }
+          0% { opacity: 0.78; }
           50% { opacity: 1.0; }
-          100% { opacity: 0.65; }
+          100% { opacity: 0.82; }
         }
       </style>
       <filter id="glowGreen" x="-60%" y="-60%" width="220%" height="220%">
@@ -336,17 +336,17 @@ export function scadaSvg(s) {
       ${fault ? `FAULT (PWR ${reason}, VMOT ${vmotReason}${dvBad ? `, dV ${dv}/${dvThr}mV` : ""})` : `State: ${busOn ? "ON" : "OFF"} - ${parStateTxt}`}
     </text>
     <!-- Lines -->
-    <line x1="258" y1="142" x2="372" y2="142"
+    <rect x="258" y="${142 - BUS_LINK_WIDTH / 2}" width="114" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link1Kind)}" stroke-width="${BUS_LINK_WIDTH}" stroke-linecap="round"
+      fill="${frameColor(link1Kind)}"
       ${frameFilter(link1Kind)} />
     <circle cx="315" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link1Kind === "off" ? "" : "pulse"}"
       fill="${frameColor(link1Kind)}" ${frameFilter(link1Kind)} />
 
-    <line x1="528" y1="142" x2="642" y2="142"
+    <rect x="528" y="${142 - BUS_LINK_WIDTH / 2}" width="114" height="${BUS_LINK_WIDTH}" rx="${BUS_LINK_WIDTH / 2}" ry="${BUS_LINK_WIDTH / 2}"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
-      stroke="${frameColor(link2Kind)}" stroke-width="${BUS_LINK_WIDTH}" stroke-linecap="round"
+      fill="${frameColor(link2Kind)}"
       ${frameFilter(link2Kind)} />
     <circle cx="585" cy="142" r="${BUS_LINK_NODE_R}"
       class="scadaLink ${link2Kind === "off" ? "" : "pulse"}"
@@ -364,4 +364,3 @@ export function scadaSvg(s) {
     </text>
   </svg>`;
 }
-

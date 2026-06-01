@@ -84,12 +84,10 @@ const POWER_REASON_MAP = {
 const VMOT_REASON_MAP = {
   0: { label: "VMOT_REASON_OK", meaning: "Sequenza VMOT completata senza errori." },
   1: { label: "VMOT_REASON_IO_NOT_READY", meaning: "I/O non pronto all'avvio sequenza VMOT." },
+  2: { label: "VMOT_REASON_DRIVER_FAULT_PRECHECK", meaning: "Driver VMOT in fault prima dell'abilitazione canali." },
   101: { label: "VMOT_REASON_CH1_RDY_FAIL", meaning: "CH1 acceso ma VMotRdy non valido." },
   102: { label: "VMOT_REASON_CH2_RDY_FAIL", meaning: "CH2 acceso ma VMotRdy non valido." },
   103: { label: "VMOT_REASON_CH3_RDY_FAIL", meaning: "CH3 acceso ma VMotRdy non valido." },
-  201: { label: "VMOT_REASON_CH1_FAULT", meaning: "Fault rilevato su CH1." },
-  202: { label: "VMOT_REASON_CH2_FAULT", meaning: "Fault rilevato su CH2." },
-  203: { label: "VMOT_REASON_CH3_FAULT", meaning: "Fault rilevato su CH3." },
 };
 
 export function powerReasonInfo(v) {

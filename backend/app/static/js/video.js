@@ -2,8 +2,8 @@ import { el, setText } from './utils.js?v=16';
 
 const VIDEO_STREAM_COUNT = 3;
 const VIDEO_STORAGE_KEY = "calypso_video";
-const VIDEO_PREFS_VERSION = 2;
-const VIDEO_KINDS = new Set(["auto", "rtsp", "mjpeg", "video"]);
+const VIDEO_PREFS_VERSION = 3;
+const VIDEO_KINDS = new Set(["auto", "rtsp", "webrtc", "mjpeg", "video"]);
 const DEFAULT_STREAM = Object.freeze({ kind: "auto", url: "" });
 const DEFAULT_STREAMS = Object.freeze([
   Object.freeze({ kind: "rtsp", url: "rtsp://admin:123456@192.168.2.15:554/mpeg4" }),
@@ -12,6 +12,7 @@ const DEFAULT_STREAMS = Object.freeze([
 ]);
 
 export let videoState = loadVideoPrefs();
+let activeWebRtc = null;
 
 function cloneDefaultStream() {
   return { ...DEFAULT_STREAM };
@@ -201,9 +202,11 @@ export function selectVideoStream(index) {
 export function unmountVideo() {
   const slot = el("video_slot");
   if (!slot) return;
+  closeActiveWebRtc();
   const media = slot.querySelectorAll("video,img");
   for (const node of media) {
     if (node.tagName === "VIDEO") {
+      node.srcObject = null;
       node.pause?.();
       node.removeAttribute("src");
       node.load?.();
@@ -217,12 +220,16 @@ export function unmountVideo() {
 export function guessKind(url) {
   const u = (url || "").toLowerCase();
   if (u.startsWith('rtsp://') || u.startsWith('rtsps://')) return 'rtsp';
+  if (u.startsWith('whep://') || u.includes('/whep')) return 'webrtc';
   if (u.includes('.mjpg') || u.includes('mjpeg') || u.includes('axis-cgi') || u.includes('cgi')) return 'mjpeg';
   return 'video';
 }
 
 export function resolveVideoSource(kind, url) {
   const finalKind = (kind === "auto") ? guessKind(url) : kind;
+  if (finalKind === "webrtc") {
+    return { kind: 'webrtc', url, statusOk: 'WebRTC OK', statusErr: 'WebRTC error' };
+  }
   if (finalKind === "rtsp") {
     const proxy = new URL('/api/video/rtsp-proxy', window.location.origin);
     proxy.searchParams.set('url', url);
@@ -233,6 +240,125 @@ export function resolveVideoSource(kind, url) {
     return { kind: 'mjpeg', url, statusOk: 'MJPEG OK', statusErr: 'MJPEG error' };
   }
   return { kind: 'video', url, statusOk: 'video OK', statusErr: 'video error' };
+}
+
+function closeActiveWebRtc() {
+  const session = activeWebRtc;
+  activeWebRtc = null;
+  if (!session) return;
+  try { session.abort?.abort(); } catch { }
+  try {
+    for (const sender of session.pc?.getSenders?.() || []) sender.track?.stop?.();
+    for (const receiver of session.pc?.getReceivers?.() || []) receiver.track?.stop?.();
+    session.pc?.close?.();
+  } catch { }
+  if (session.resourceUrl) {
+    fetch(session.resourceUrl, { method: "DELETE", keepalive: true }).catch(() => { });
+  }
+}
+
+function resolveWhepUrl(url) {
+  const raw = String(url || "").trim();
+  if (raw.toLowerCase().startsWith("whep://")) {
+    return `http://${raw.slice("whep://".length)}`;
+  }
+  return raw;
+}
+
+function waitForIceGatheringComplete(pc, timeoutMs = 1500) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      pc.removeEventListener("icegatheringstatechange", onState);
+      resolve();
+    };
+    const onState = () => {
+      if (pc.iceGatheringState === "complete") finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    pc.addEventListener("icegatheringstatechange", onState);
+  });
+}
+
+function locationToAbsoluteUrl(location, baseUrl) {
+  if (!location) return null;
+  try {
+    return new URL(location, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function mountWebRtcVideo(url, label, resolved) {
+  const slot = el("video_slot");
+  if (!slot) return;
+
+  if (!window.RTCPeerConnection) {
+    setText("video_status", `${label} WebRTC not supported`);
+    return;
+  }
+
+  const whepUrl = resolveWhepUrl(url);
+  const abort = new AbortController();
+  const pc = new RTCPeerConnection({
+    iceServers: [],
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require",
+  });
+  activeWebRtc = { pc, abort, resourceUrl: null };
+
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.controls = false;
+  video.srcObject = new MediaStream();
+  slot.appendChild(video);
+
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.ontrack = (event) => {
+    const stream = event.streams?.[0] || video.srcObject;
+    if (stream && video.srcObject !== stream) video.srcObject = stream;
+    if (!event.streams?.length && event.track) video.srcObject.addTrack(event.track);
+    video.play().catch(() => { });
+  };
+  pc.onconnectionstatechange = () => {
+    const state = pc.connectionState || pc.iceConnectionState;
+    if (state === "connected") setText("video_status", `${label} ${resolved.statusOk}`);
+    else if (state === "failed" || state === "disconnected") setText("video_status", `${label} ${resolved.statusErr}`);
+  };
+
+  try {
+    setText("video_status", `${label} WebRTC connecting`);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    const response = await fetch(whepUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/sdp",
+        "Accept": "application/sdp",
+      },
+      body: pc.localDescription.sdp,
+      signal: abort.signal,
+    });
+    if (!response.ok) throw new Error(`WHEP HTTP ${response.status}`);
+
+    const session = activeWebRtc;
+    if (session?.pc === pc) {
+      session.resourceUrl = locationToAbsoluteUrl(response.headers.get("Location"), whepUrl);
+    }
+    const answer = await response.text();
+    await pc.setRemoteDescription({ type: "answer", sdp: answer });
+  } catch (e) {
+    if (activeWebRtc?.pc === pc) closeActiveWebRtc();
+    setText("video_status", `${label} ${e?.message || resolved.statusErr}`);
+  }
 }
 
 export function mountVideo(kind, url, label = "Stream") {
@@ -247,6 +373,10 @@ export function mountVideo(kind, url, label = "Stream") {
   }
 
   const resolved = resolveVideoSource(kind, url);
+  if (resolved.kind === "webrtc") {
+    mountWebRtcVideo(resolved.url, label, resolved);
+    return;
+  }
   if (kind === "rtsp" || resolved.statusOk === "RTSP proxy OK") setText("video_status", `${label} RTSP connecting`);
   else setText("video_status", `${label} connecting`);
 

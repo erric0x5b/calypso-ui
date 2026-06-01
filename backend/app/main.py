@@ -86,7 +86,7 @@ AUTOLOG_ENABLED_DEFAULT = os.getenv("CALYPSO_AUTOLOG_ENABLED", "1").strip().lowe
 AUTOLOG_DEPTH_M = float(os.getenv("CALYPSO_AUTOLOG_DEPTH_M", "0.5"))
 AUTOLOG_HYST_M = float(os.getenv("CALYPSO_AUTOLOG_HYST_M", "0.3"))
 FFMPEG_BIN = os.getenv("CALYPSO_FFMPEG_BIN", "ffmpeg")
-RTSP_PROXY_TRANSPORT = os.getenv("CALYPSO_RTSP_TRANSPORT", "tcp").strip().lower() or "tcp"
+RTSP_PROXY_TRANSPORT = os.getenv("CALYPSO_RTSP_TRANSPORT", "udp").strip().lower() or "udp"
 RTSP_PROXY_FPS = max(1, int(os.getenv("CALYPSO_RTSP_MJPEG_FPS", "24")))
 RTSP_PROXY_QSCALE = max(2, int(os.getenv("CALYPSO_RTSP_MJPEG_QSCALE", "7")))
 
@@ -180,6 +180,10 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
     if not ffmpeg_path or not os.path.exists(ffmpeg_path):
         raise HTTPException(status_code=503, detail="ffmpeg not available")
 
+    rtsp_opts = []
+    if RTSP_PROXY_TRANSPORT == "tcp":
+        rtsp_opts = ["-rtsp_flags", "prefer_tcp"]
+
     cmd = [
         ffmpeg_path,
         "-hide_banner",
@@ -187,14 +191,21 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
         "warning",
         "-rtsp_transport",
         RTSP_PROXY_TRANSPORT,
+        *rtsp_opts,
+        "-max_delay",
+        "0",
+        "-reorder_queue_size",
+        "0",
         "-probesize",
-        "32768",
+        "32",
         "-analyzeduration",
         "0",
         "-fflags",
-        "nobuffer",
+        "nobuffer+discardcorrupt",
         "-flags",
         "low_delay",
+        "-flags2",
+        "fast",
         "-avioflags",
         "direct",
         "-i",
@@ -206,6 +217,8 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
         f"fps={RTSP_PROXY_FPS}",
         "-q:v",
         str(RTSP_PROXY_QSCALE),
+        "-threads",
+        "1",
         "-flush_packets",
         "1",
         "-f",
@@ -276,7 +289,11 @@ async def rtsp_to_mjpeg_stream(url: str, request: Request):
     return StreamingResponse(
         gen(),
         media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 @app.get("/docs.json", include_in_schema=False)
@@ -1387,6 +1404,7 @@ def api_health():
             "vbus_mv": pod.get("Vbus_mv", pod.get("V48_mv")),
             "par_state": pod.get("ParState"),
             "vmot_reason": pod.get("VmotReason"),
+            "ina_fault": pod.get("InaFault"),
         }
     return {
         "ok": True,

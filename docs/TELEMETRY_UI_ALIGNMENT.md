@@ -20,6 +20,7 @@ This document summarizes telemetry currently emitted by firmware (`Engine`) for 
 - `ALM`: event-driven, plus repeats every `ALM_REPEAT_MS` (default 5000 ms), min global gap `ALM_MIN_GAP_MS` (default 100 ms).
 - `CAPS`: one-shot at startup.
 - `ACK`: on command reception (`CMD`).
+- Light status poll: 1 Hz on each pod RS485 bus when no recent SFC light command is being bridged and connected light IDs have been configured.
 
 ## Messages to SFC
 
@@ -48,7 +49,9 @@ Payload keys:
 | `Feat_PWR_SM` | u8 | bool | Currently `1`. |
 | `Feat_ALM` | u8 | bool | Currently `1`. |
 | `Feat_LGT_BRIDGE` | u8 | bool | Currently `1`. |
+| `Feat_LGT_STATUS_POLL` | u8 | bool | Currently `1`; firmware can poll configured light IDs autonomously when the SFC is idle. |
 | `Feat_ESC_CAN` | u8 | bool | Currently `1`. |
+| `Feat_INA_FAULT` | u8 | bool | Currently `1`; firmware reports summarized INA238 Power Switch fault status. |
 
 ## `ENV` (environment)
 
@@ -79,6 +82,7 @@ Payload keys:
 | `dV_mv` | i32 | mV | `BAT1 - BAT2` battery delta. |
 | `Reason` | u32 | enum | PowerSM reason code (state decision). |
 | `VmotReason` | u32 | enum | VMOT sequence/fault reason code. |
+| `InaFault` | u8 | bool | Summary fault flag from the Power Switch INA238 diagnostic register. |
 | `Vmot1On..Vmot3On` | u8 | bool | Present when `SRC=BAT1`. |
 | `Vmot4On..Vmot6On` | u8 | bool | Present when `SRC=BAT2`. |
 
@@ -118,12 +122,35 @@ Payload keys:
 |---|---|
 | 0 | `VMOT_REASON_OK` |
 | 1 | `VMOT_REASON_IO_NOT_READY` |
+| 2 | `VMOT_REASON_DRIVER_FAULT_PRECHECK` |
 | 101 | `VMOT_REASON_CH1_RDY_FAIL` |
 | 102 | `VMOT_REASON_CH2_RDY_FAIL` |
 | 103 | `VMOT_REASON_CH3_RDY_FAIL` |
-| 201 | `VMOT_REASON_CH1_FAULT` |
-| 202 | `VMOT_REASON_CH2_FAULT` |
-| 203 | `VMOT_REASON_CH3_FAULT` |
+
+### `InaFault` details
+
+`PWR.InaFault` is the only INA238 Power Switch diagnostic field sent to SFC telemetry. The detailed code is intentionally kept local to the web/debug UI:
+
+| Debug key | Type | Notes |
+|---|---|---|
+| `diagnostics.ina_fault` | bool | Same logical state as `PWR.InaFault`. |
+| `diagnostics.ina_diag_raw` | u16 | Raw `DIAG_ALRT` register (`0x0B`) read from the Power Switch INA238 at `0x40`. |
+| `diagnostics.ina_diag_raw_hex` | string | Same value formatted as hex for the web UI. |
+| `diagnostics.ina_fault_code` | u16 | Fault-only code derived from `DIAG_ALRT`: bits `9,7,6,5,4,3,2` are copied, and bit `0` is set when `MEMSTAT=0`. `CNVRF` and alert configuration bits are ignored. |
+| `diagnostics.ina_fault_code_hex` | string | Same value formatted as hex for the web UI. |
+
+`ina_fault_code` bit map:
+
+| Bit | Name | Meaning |
+|---:|---|---|
+| 9 | `MATHOF` | Arithmetic overflow; current/power data may be invalid. |
+| 7 | `TMPOL` | Temperature over-limit. |
+| 6 | `SHNTOL` | Shunt over-limit. |
+| 5 | `SHNTUL` | Shunt under-limit. |
+| 4 | `BUSOL` | Bus over-limit. |
+| 3 | `BUSUL` | Bus under-limit. |
+| 2 | `POL` | Power over-limit. |
+| 0 | `MEMSTAT_ERR` | Device trim memory checksum error (`DIAG_ALRT.MEMSTAT=0`). |
 
 ## `ESC` (VESC telemetry)
 
@@ -209,14 +236,48 @@ Accepted for peer-state update:
 
 These frames are consumed internally (no ACK).
 
-### Light bridge passthrough (SFC -> RS485)
+### Light bridge passthrough (controller UI -> RS485)
 
 Forwarded transparently to RS485 (no ACK generated):
 
 | Condition | Behavior |
 |---|---|
-| `SRC=SFC` and (`DST=LGT*` or `DST=ALL`) and `MSG=LGT` | Forward line unchanged to RS485 bus. |
-| `SRC=SFC` and (`DST=LGT*` or `DST=ALL`) and `MSG=CMD` with `Type=LGT` | Forward line unchanged to RS485 bus. |
+| `DST=LGT*` or `DST=BUS` | Forward line unchanged to RS485 bus. |
+| `DST=ALL` and `MSG=LGT` | Forward line unchanged to RS485 bus. |
+| `DST=ALL` and `MSG=CMD` with `Type=LGT` | Forward line unchanged to RS485 bus. |
+
+When the bridged frame source is `SFC`, firmware records it as recent light-bus activity and suppresses the autonomous light status poll for `LGT_STATUS_CMD_IDLE_MS` (default 1000 ms).
+
+### Light ID configuration (SFC -> firmware)
+
+The SFC must tell each pod which light IDs are physically connected to that pod's RS485 bus. Send a local `CMD` to `BAT1`, `BAT2`, or `ALL`.
+
+Supported payloads:
+
+| Payload | Behavior |
+|---|---|
+| `CmdId,<id>,Type,LGT_IDS,Ids,1;2;3` | Sets the polling list to light IDs 1, 2 and 3. Separators accepted in `Ids`: `;`, `|`, `:`. `LGT1;LGT2` is also accepted. |
+| `CmdId,<id>,Type,LGT_IDS,Mask,0x00000007` | Sets IDs from bitmask; bit 0 means `LGT1`, bit 1 means `LGT2`, up to `LGT32`. |
+| `CmdId,<id>,Type,LGT_IDS,Clear,1` | Clears the polling list. |
+| `CmdId,<id>,Type,LGT_CFG,...` | Alias for `LGT_IDS`. |
+
+The firmware returns the standard `ACK`. If no IDs are configured, no autonomous status request is generated on that pod.
+
+### Autonomous light status poll (firmware -> RS485)
+
+If enabled and configured, each pod sends one request per second on its own RS485 bus while the SFC is not sending light commands. IDs are polled round-robin:
+
+`$BUS,LGT<id>,CMD,2,<seq>,<ts_ms>,CmdId,<seq>,Type,LGT,Op,STATUS,Id,<id>*CRC`
+
+Default guards:
+
+| Setting | Default | Behavior |
+|---|---:|---|
+| `LGT_STATUS_POLL_PERIOD_MS` | 1000 ms | Minimum period between generated requests. |
+| `LGT_STATUS_CMD_IDLE_MS` | 1000 ms | Minimum idle time after an SFC light command before polling resumes. |
+| `LGT_STATUS_BUS_IDLE_MS` | 50 ms | Minimum idle time after an RS485 RX line before polling. |
+| `LGT_STATUS_POLL_MASTER_ONLY` | 0 | Both `BAT1` and `BAT2` generate polls on their separate RS485 buses. |
+| `LGT_MAX_POLL_IDS` | 16 | Maximum configured light IDs per pod. |
 
 ### Local command handling (`MSG=CMD`)
 
@@ -258,7 +319,6 @@ Behavior:
 - `On=1`: starts sequential VMOT enable logic.
 - `On=0`: clears VMOT command and turns VMOT channels off.
 - If `On=1`, interlocks are checked first; on fail returns `CMD_ERR_INTERLOCK`.
-- UI/backend expands `DST=ALL` into pod-specific packets: `DST=BAT1` to `CALYPSO_UDP_TX_HOST` and `DST=BAT2` to `CALYPSO_UDP_TX_SLAVE_HOST`.
 
 ### `Type=DVTHR`
 
@@ -274,6 +334,21 @@ Validation:
 Behavior:
 
 - updates runtime delta threshold config (`_dv_thr_mv_cfg`).
+
+### `Type=LGT_IDS` / `Type=LGT_CFG`
+
+Required keys:
+
+- `CmdId`
+- one of `Ids`, `Mask`, or `Clear`
+
+Behavior:
+
+- Configures which light IDs the receiving pod polls on its local RS485 bus.
+- `Ids` accepts semicolon/pipe/colon separated numeric IDs, with optional `LGT` prefix.
+- `Mask` maps bit 0 to `LGT1`, bit 1 to `LGT2`, up to `LGT32`.
+- `Clear=1`, `Ids,0`, `Ids,none`, `Ids,clear`, or `Mask,0` disables automatic polling.
+- Invalid IDs or more than `LGT_MAX_POLL_IDS` return `CMD_ERR_BAD_VALUE`.
 
 ### `Type=ALM_CLR`
 
@@ -311,6 +386,7 @@ Behavior:
 - Lines from RS485 are parsed as NMEA v2.
 - If valid (`CRC + ver=2`), they are forwarded to SFC.
 - Invalid lines are dropped and counted in `HB.RxErr`.
+- Responses to the autonomous light status poll use the same path; firmware forwards valid light frames unchanged to the SFC.
 
 ## Notes for UI implementation
 

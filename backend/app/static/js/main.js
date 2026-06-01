@@ -1,8 +1,8 @@
-import * as utils from './utils.js?v=16';
-import { scadaSvg } from './power.js?v=17';
+import * as utils from './utils.js?v=17';
+import { scadaSvg } from './power.js?v=12';
 import * as lights from './lights.js?v=3';
 import * as thrusters from './thrusters.js';
-import * as video from './video.js?v=20';
+import * as video from './video.js?v=21';
 import * as th3 from './three3d.js';
 import * as logs from './logs.js';
 
@@ -136,8 +136,8 @@ const ALARM_GUIDE_BY_ID = {
     },
     320: {
         label: "ALM_PWR_FAULT",
-        meaning: "Fault logica power switch/PowerSM.",
-        action: "Leggi Reason/VmotReason, rimuovi causa e poi riabilita."
+        meaning: "Fault logica power switch/PowerSM o driver VMOT.",
+        action: "Leggi Reason, VmotReason e InaFault; se VmotReason=2 verifica il driver VMOT prima del re-enable."
     },
     9001: {
         label: "NODE_OFFLINE",
@@ -199,7 +199,7 @@ const DIAG_ALARM_CATALOG = [
     { key: "210", id: 210, label: "ALM_OVERTEMP", description: "Temperatura oltre soglia." },
     { key: "300", id: 300, label: "ALM_VBUS_LOW", description: "VBUS sotto soglia." },
     { key: "310", id: 310, label: "ALM_DV_HIGH", description: "Delta tensione batterie troppo alto." },
-    { key: "320", id: 320, label: "ALM_PWR_FAULT", description: "Fault logica power switch." },
+    { key: "320", id: 320, label: "ALM_PWR_FAULT", description: "Fault logica power switch o driver VMOT." },
     { key: "400", label: "ALM_VESC_LOST", description: "Telemetria persa su ESC specifico.", match: (a) => {
         const id = Number(a?.id);
         return (Number.isFinite(id) && id >= 401 && id <= 499) || /VESC_LOST|ESC/i.test(String(a?.text || ""));
@@ -2709,7 +2709,6 @@ function setupCollapseButtons() {
 }
 
 function renderMainSlot(tab) {
-    utils.setText('main_mode', tab.toUpperCase());
     const mw = utils.el('missionWrap');
     const tw = utils.el('missionTabWrap');
     const vw = utils.el('videoWrap');
@@ -3445,4 +3444,3 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 export { render, init };
-

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>calypso-ui</title>
-  <link rel="stylesheet" href="app.css?v=23">
+  <link rel="stylesheet" href="app.css?v=27">
 </head>
 
 <body>
@@ -15,7 +15,6 @@
       <span class="brandName">Calypso-UI</span>
       <div class="headerBadges">
         <span id="status" class="pill">connecting...</span>
-        <span class="pill" id="main_mode">VEHICLE</span>
       </div>
     </div>
     <div class="tabs">
@@ -168,10 +167,6 @@
 
             <div class="videoStage">
               <div id="video_slot" class="videoSlot"></div>
-            </div>
-
-            <div class="mono" style="margin-top:10px;opacity:.75">
-              *RTSP viene convertito dal backend in MJPEG. Nel container deve essere presente `ffmpeg`. Configura gli stream nella scheda `SETUP`; `STOP` ferma solo la visualizzazione corrente.
             </div>
           </div>
         </div>
@@ -407,8 +402,9 @@
                       <select id="video_source_1">
                         <option value="auto">AUTO</option>
                         <option value="rtsp">RTSP (proxy)</option>
+                        <option value="webrtc">WEBRTC (WHEP)</option>
                         <option value="mjpeg">MJPEG</option>
-                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                        <option value="video">VIDEO (mp4/hls*)</option>
                       </select>
                       <input id="video_url_1" type="text" placeholder="URL stream 1 (es: rtsp://..., /static/demo.mp4, http://...)" />
                     </div>
@@ -423,8 +419,9 @@
                       <select id="video_source_2">
                         <option value="auto">AUTO</option>
                         <option value="rtsp">RTSP (proxy)</option>
+                        <option value="webrtc">WEBRTC (WHEP)</option>
                         <option value="mjpeg">MJPEG</option>
-                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                        <option value="video">VIDEO (mp4/hls*)</option>
                       </select>
                       <input id="video_url_2" type="text" placeholder="URL stream 2 (es: rtsp://..., /static/demo.mp4, http://...)" />
                     </div>
@@ -439,8 +436,9 @@
                       <select id="video_source_3">
                         <option value="auto">AUTO</option>
                         <option value="rtsp">RTSP (proxy)</option>
+                        <option value="webrtc">WEBRTC (WHEP)</option>
                         <option value="mjpeg">MJPEG</option>
-                        <option value="video">VIDEO (mp4/webrtc/hls*)</option>
+                        <option value="video">VIDEO (mp4/hls*)</option>
                       </select>
                       <input id="video_url_3" type="text" placeholder="URL stream 3 (es: rtsp://..., /static/demo.mp4, http://...)" />
                     </div>
@@ -581,7 +579,7 @@
           <tr><td>210 OVERTEMP</td><td>Temperatura oltre soglia.</td><td>Riduci carico e controlla dissipazione.</td></tr>
           <tr><td>300 VBUS_LOW</td><td>VBUS sotto soglia.</td><td>Controlla batterie, carico e potenza.</td></tr>
           <tr><td>310 DV_HIGH</td><td>Delta tensione batterie troppo alto.</td><td>Non forzare parallelo, equalizza batterie.</td></tr>
-          <tr><td>320 PWR_FAULT</td><td>Fault logica power switch.</td><td>Leggi Reason/VmotReason e rimuovi causa.</td></tr>
+          <tr><td>320 PWR_FAULT</td><td>Fault logica power switch o driver VMOT.</td><td>Leggi Reason, VmotReason e InaFault; con VmotReason=2 verifica il driver VMOT.</td></tr>
           <tr><td>400+id VESC_LOST</td><td>Telemetria persa su ESC specifico.</td><td>Verifica ESC indicato, CAN e alimentazione.</td></tr>
           <tr><td>NODE_OFFLINE:BAT1/BAT2</td><td>Nodo senza heartbeat oltre OFFLINE_MS.</td><td>Verifica alimentazione POD e link comunicazione.</td></tr>
           <tr><td>BusConn OFF (POD online)</td><td>POD attivo ma non collegato al bus.</td><td>Controlla contattori, comandi bus e protezioni.</td></tr>
@@ -615,12 +613,10 @@
           <tr><th>Code</th><th>Nome</th><th>Significato</th></tr>
           <tr><td>0</td><td>VMOT_REASON_OK</td><td>Sequenza VMOT completata senza errori.</td></tr>
           <tr><td>1</td><td>VMOT_REASON_IO_NOT_READY</td><td>I/O non pronto all'avvio sequenza VMOT.</td></tr>
+          <tr><td>2</td><td>VMOT_REASON_DRIVER_FAULT_PRECHECK</td><td>Driver VMOT in fault prima dell'abilitazione canali.</td></tr>
           <tr><td>101</td><td>VMOT_REASON_CH1_RDY_FAIL</td><td>CH1 acceso ma VMotRdy non valido.</td></tr>
           <tr><td>102</td><td>VMOT_REASON_CH2_RDY_FAIL</td><td>CH2 acceso ma VMotRdy non valido.</td></tr>
           <tr><td>103</td><td>VMOT_REASON_CH3_RDY_FAIL</td><td>CH3 acceso ma VMotRdy non valido.</td></tr>
-          <tr><td>201</td><td>VMOT_REASON_CH1_FAULT</td><td>Fault rilevato su CH1.</td></tr>
-          <tr><td>202</td><td>VMOT_REASON_CH2_FAULT</td><td>Fault rilevato su CH2.</td></tr>
-          <tr><td>203</td><td>VMOT_REASON_CH3_FAULT</td><td>Fault rilevato su CH3.</td></tr>
         </table>
         <div style="margin-top:10px;"><b>Fault fari</b></div>
         <table>
@@ -671,7 +667,7 @@
   </script>
   <script type="module" src="three_boot.js?v=15"></script>
   <script src="sonar_ping360.js?v=5" defer></script>
-  <script type="module" src="js/main.js?v=30"></script>
+  <script type="module" src="js/main.js?v=31"></script>
 </body>
 
 </html>
