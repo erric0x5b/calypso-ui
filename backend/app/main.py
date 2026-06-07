@@ -94,7 +94,15 @@ MAVLINK_HOST = os.getenv("MAVLINK_HOST", "127.0.0.1")
 MAVLINK_PORT = int(os.getenv("MAVLINK_PORT", "8080"))
 MAVLINK_CONN = f"udp:0.0.0.0:{MAVLINK_PORT}"
 
-MAVLINK_WS_URL = os.getenv("MAVLINK_WS_URL", "ws://192.168.2.2:6040/v1/ws/mavlink")  # <-- non hardcoded
+MAVLINK_WS_URL = os.getenv("MAVLINK_WS_URL", "ws://host.docker.internal:6040/v1/ws/mavlink").strip()
+MAVLINK_WS_FALLBACK_URLS = [
+    url.strip()
+    for url in os.getenv(
+        "MAVLINK_WS_FALLBACK_URLS",
+        "ws://192.168.2.2:6040/v1/ws/mavlink,ws://blueos:6040/v1/ws/mavlink",
+    ).split(",")
+    if url.strip()
+]
 MAVLINK_ENABLED = os.getenv("MAVLINK_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 
 MAVLINK_PYMAVLINK_AVAILABLE = (mavutil is not None)
@@ -103,6 +111,12 @@ MAVLINK_UDP_ENABLED = MAVLINK_ENABLED and (not MAVLINK_WS_ENABLED) and MAVLINK_P
 MAV_MODE_FLAG_SAFETY_ARMED = int(
     getattr(getattr(mavutil, "mavlink", object()), "MAV_MODE_FLAG_SAFETY_ARMED", 0x80)
 ) if mavutil is not None else 0x80
+MAV_STATE_STANDBY = int(
+    getattr(getattr(mavutil, "mavlink", object()), "MAV_STATE_STANDBY", 3)
+) if mavutil is not None else 3
+MAV_STATE_ACTIVE = int(
+    getattr(getattr(mavutil, "mavlink", object()), "MAV_STATE_ACTIVE", 4)
+) if mavutil is not None else 4
 
 # Ensure log dir exists early
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -524,8 +538,52 @@ def parse_safety_armed_from_base_mode(base_mode) -> Optional[int]:
     return 1 if (bm & MAV_MODE_FLAG_SAFETY_ARMED) else 0
 
 
-def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = "HEARTBEAT") -> None:
-    armed = normalize_bool01(safety_armed)
+def parse_armed_from_system_status(system_status) -> Optional[int]:
+    if system_status is None:
+        return None
+
+    if isinstance(system_status, dict):
+        raw = (
+            system_status.get("value")
+            if system_status.get("value") is not None
+            else system_status.get("raw")
+        )
+        name = system_status.get("name") or system_status.get("label") or system_status.get("status")
+        parsed_name = parse_armed_from_system_status(name)
+        if parsed_name is not None:
+            return parsed_name
+        system_status = raw
+
+    if isinstance(system_status, str):
+        tok = system_status.strip()
+        if not tok:
+            return None
+        upper = tok.upper()
+        if "MAV_STATE_ACTIVE" in upper or upper == "ACTIVE":
+            return 1
+        if "MAV_STATE_STANDBY" in upper or upper == "STANDBY":
+            return 0
+        try:
+            system_status = int(tok, 0)
+        except Exception:
+            return None
+
+    try:
+        st = int(system_status)
+    except Exception:
+        return None
+
+    if st == MAV_STATE_ACTIVE:
+        return 1
+    if st == MAV_STATE_STANDBY:
+        return 0
+    return None
+
+
+def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, system_status=None, source: str = "HEARTBEAT") -> None:
+    armed = parse_armed_from_system_status(system_status)
+    if armed is None:
+        armed = normalize_bool01(safety_armed)
     if armed is None:
         armed = parse_safety_armed_from_base_mode(base_mode)
     if armed is None:
@@ -542,10 +600,22 @@ def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = 
     except Exception:
         bm = None
 
+    sys_status: Optional[int] = None
+    try:
+        if isinstance(system_status, dict):
+            ss_raw = system_status.get("value", system_status.get("raw"))
+            if ss_raw is not None:
+                sys_status = int(ss_raw)
+        elif system_status is not None and not isinstance(system_status, (list, tuple, set)):
+            sys_status = int(system_status)
+    except Exception:
+        sys_status = None
+
     mav = state.setdefault("mav", {"last_ms": 0, "msgs": 0, "drops": 0})
     prev = mav.get("safety_armed")
     mav["safety_armed"] = int(armed)
     mav["base_mode"] = bm
+    mav["system_status"] = sys_status
     mav["last_heartbeat_ms"] = int(datetime.utcnow().timestamp() * 1000) & 0xFFFFFFFF
     mav["last_heartbeat_source"] = source
 
@@ -553,7 +623,9 @@ def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = 
         return
 
     nav = state.get("nav") or {}
-    txt = f"HEARTBEAT MAV_MODE_SAFETY_ARMED={int(armed)}"
+    txt = f"HEARTBEAT MAV_STATE_ARMED={int(armed)}"
+    if sys_status is not None:
+        txt += f" system_status={sys_status}"
     if bm is not None:
         txt += f" base_mode={bm}"
     txt += f" src={source}"
@@ -569,6 +641,7 @@ def update_mav_heartbeat_armed(base_mode=None, safety_armed=None, source: str = 
         "type": "MAV_ARM",
         "armed": int(armed),
         "base_mode": bm,
+        "system_status": sys_status,
         "text": txt,
     })
 
@@ -965,6 +1038,14 @@ def build_diagnostics_state() -> dict:
     mav_age = age_from_monotonic(mav.get("last_seen_monotonic_ms"))
     mav_enabled = bool(MAVLINK_ENABLED)
     mav_ok = mav_enabled and mav_age is not None and mav_age <= 3000
+    mav_ws_url = str(mav.get("ws_url") or MAVLINK_WS_URL or "")
+    mav_error = str(mav.get("last_error") or "")
+    mav_detail = (
+        f"msgs={mav.get('msgs', 0)} source={mav.get('last_heartbeat_source', '-')} "
+        f"ws={mav_ws_url or '-'} connected={mav.get('connected', False)}"
+    )
+    if mav_error:
+        mav_detail += f" error={mav_error}"
     devices.append({
         "node": "BLUEOS",
         "kind": "BlueOS / MAVLink",
@@ -976,7 +1057,7 @@ def build_diagnostics_state() -> dict:
         "ip": blueos_ip,
         "url": f"http://{blueos_ip}",
         "last_rx_age_ms": mav_age,
-        "detail": f"msgs={mav.get('msgs', 0)} source={mav.get('last_heartbeat_source', '-')}",
+        "detail": mav_detail,
     })
 
     ctrl = state.get("controller", {}) or {}
@@ -1167,6 +1248,7 @@ def handle_udp_datagram(data: bytes, addr):
         if addr:
             node["ip"] = addr[0]
             node["udp_port"] = addr[1]
+        clear_node_offline_alarm(src, parsed.get("ts_ms"))
 
     asyncio.create_task(ws_broadcast({
         "type": "udp",
@@ -1175,6 +1257,38 @@ def handle_udp_datagram(data: bytes, addr):
         "ts_ms": parsed["ts_ms"],
         "raw": parsed["raw"],
     }))
+
+
+def clear_node_offline_alarm(node: str, ts_ms=None) -> None:
+    if node not in state.get("pods", {}):
+        return
+
+    target_text = f"NODE_OFFLINE:{node}"
+    active = state.get("alarms_active", [])
+    remaining = [
+        alarm for alarm in active
+        if not (
+            str(alarm.get("src")) == "SFC"
+            and str(alarm.get("id")) == "9001"
+            and str(alarm.get("text")) == target_text
+        )
+    ]
+    if len(remaining) == len(active):
+        return
+
+    state["alarms_active"] = remaining
+    alarm = {
+        "ts_ms": ts_ms if ts_ms is not None else state.get("last_update_ms"),
+        "src": "SFC",
+        "id": 9001,
+        "sev": 3,
+        "active": 0,
+        "latched": 0,
+        "text": target_text,
+    }
+    state["alarms_history"].append(alarm)
+    append_alarm_csv(alarm)
+    asyncio.create_task(ws_broadcast({"type": "alarm", "alarm": alarm}))
 
 
 def handle_controller_payload(controller_state: dict, addr):
@@ -1201,10 +1315,10 @@ async def offline_watchdog():
         await asyncio.sleep(1.0)
         now_ms = int(time.monotonic() * 1000)
         for node, info in state["nodes"].items():
-            last_seen = info.get("last_seen_monotonic_ms")
-            if last_seen is None:
+            last_rx = info.get("last_rx_monotonic_ms")
+            if last_rx is None:
                 continue
-            dt = now_ms - int(last_seen)
+            dt = now_ms - int(last_rx)
             if dt > OFFLINE_MS and info.get("online"):
                 info["online"] = False
                 if node in state.get("pods", {}):
@@ -1328,6 +1442,7 @@ async def startup():
 
     print("[mavlink] ENABLED:", MAVLINK_ENABLED,
       "WS_URL:", MAVLINK_WS_URL,
+      "WS_FALLBACK_URLS:", MAVLINK_WS_FALLBACK_URLS,
       "WS_ENABLED:", MAVLINK_WS_ENABLED,
       "UDP_ENABLED:", MAVLINK_UDP_ENABLED,
       "CONN:", MAVLINK_CONN)
@@ -2396,6 +2511,7 @@ async def mavlink_reader():
                 update_mav_heartbeat_armed(
                     base_mode=getattr(msg, "base_mode", None),
                     safety_armed=getattr(msg, "MAV_MODE_SAFETY_ARMED", None),
+                    system_status=getattr(msg, "system_status", None),
                     source="MAVLINK_UDP",
                 )
             elif mt == "VFR_HUD":
@@ -2434,6 +2550,7 @@ async def mavlink_reader():
                     "thr": {k: state.get("thr", {}).get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
                     "att": dict(state.get("att") or {}),
                     "nav": dict(state.get("nav") or {}),
+                    "mav": dict(state.get("mav") or {}),
                 }), loop)
 
     await asyncio.to_thread(_run)
@@ -2464,12 +2581,24 @@ async def mavlink_ws_loop():
     last_state_push = 0.0
     STATE_PUSH_MIN_DT = 0.10
 
+    urls = []
+    for url in [MAVLINK_WS_URL, *MAVLINK_WS_FALLBACK_URLS]:
+        if url and url not in urls:
+            urls.append(url)
+    url_index = 0
+
     while True:
+        ws_url = urls[url_index % len(urls)] if urls else MAVLINK_WS_URL
         try:
-            print(f"[mavlink] connecting to {MAVLINK_WS_URL}")
-            async with websockets.connect(MAVLINK_WS_URL, ping_interval=20, ping_timeout=20) as ws:
-                print("[mavlink] connected")
-                state.setdefault("mav", {})["connected"] = True
+            mav_state = state.setdefault("mav", {})
+            mav_state["ws_url"] = ws_url
+            print(f"[mavlink] connecting to {ws_url}")
+            async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
+                print(f"[mavlink] connected {ws_url}")
+                mav_state = state.setdefault("mav", {})
+                mav_state["connected"] = True
+                mav_state["ws_url"] = ws_url
+                mav_state["last_error"] = None
 
                 async for raw in ws:
                     try:
@@ -2507,6 +2636,7 @@ async def mavlink_ws_loop():
                         update_mav_heartbeat_armed(
                             base_mode=msg.get("base_mode", msg.get("baseMode")),
                             safety_armed=msg.get("MAV_MODE_SAFETY_ARMED", msg.get("safety_armed")),
+                            system_status=msg.get("system_status", msg.get("systemStatus")),
                             source="MAVLINK_WS",
                         )
                     elif mtype == "VFR_HUD":
@@ -2597,8 +2727,13 @@ async def mavlink_ws_loop():
                             "thr": {k: state["thr"].get(k, {}) for k in ("TH1", "TH2", "TH3", "TH4", "TH5", "TH6")},
                             "att": dict(state.get("att") or {}),
                             "nav": dict(state.get("nav") or {}),
+                            "mav": dict(state.get("mav") or {}),
                         })
         except Exception as e:
-            state.setdefault("mav", {})["connected"] = False
-            print(f"[mavlink] error: {e}")
+            mav_state = state.setdefault("mav", {})
+            mav_state["connected"] = False
+            mav_state["ws_url"] = ws_url
+            mav_state["last_error"] = str(e)
+            print(f"[mavlink] error {ws_url}: {e}")
+            url_index += 1
             await asyncio.sleep(2.0)

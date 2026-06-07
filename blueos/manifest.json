@@ -8,6 +8,184 @@
     "extension_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "company_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "versions": {
+      "0.4.13": {
+        "identifier": "feb8dcfb-805a-5875-b60f-837ee52a323c",
+        "type": "interface",
+        "website": "https://github.com/erric0x5b/calypso-ui",
+        "images": [
+          {
+            "expanded_size": 344109237,
+            "platform": {
+              "architecture": "arm64",
+              "variant": null,
+              "os": "linux"
+            },
+            "digest": "sha256:0882bc086acad8894663cf5dd1f09f8230dec08e3a080061f59b842c8cef4c41"
+          },
+          {
+            "expanded_size": 302951928,
+            "platform": {
+              "architecture": "arm",
+              "variant": "v7",
+              "os": "linux"
+            },
+            "digest": "sha256:08e2d518a38bdd9e03c484148fac57e537298777bc99abbc69312aeab4341b4f"
+          }
+        ],
+        "authors": [
+          {
+            "name": "DeepEx",
+            "email": "support@deepex.example"
+          }
+        ],
+        "filter_tags": [
+          "rov",
+          "telemetry",
+          "control",
+          "video"
+        ],
+        "extra_links": {
+          "website": "https://github.com/erric0x5b/calypso-ui",
+          "support": "https://github.com/erric0x5b/calypso-ui/issues"
+        },
+        "tag": "0.4.13",
+        "docs": null,
+        "readme": "<h1>Calypso UI</h1>\n<p>BlueOS extension for the DeepEx Calypso ROV control interface.</p>\n<p>The extension provides the vehicle dashboard, power SCADA, telemetry widgets, mission logging, video stream display, sonar controls, diagnostics, and setup tools used by the Calypso UI backend.</p>",
+        "support": "https://github.com/erric0x5b/calypso-ui/issues",
+        "requirements": "core >= 1.1",
+        "company": {
+          "about": "ROV systems and marine exploration technologies",
+          "name": "DeepEx",
+          "email": "support@deepex.it"
+        },
+        "permissions": {
+          "ExposedPorts": {
+            "80/tcp": {},
+            "14590/udp": {},
+            "14591/udp": {},
+            "5010/udp": {}
+          },
+          "HostConfig": {
+            "ExtraHosts": [
+              "host.docker.internal:host-gateway"
+            ],
+            "PortBindings": {
+              "80/tcp": [
+                {
+                  "HostPort": ""
+                }
+              ],
+              "14590/udp": [
+                {
+                  "HostPort": "14590"
+                }
+              ],
+              "14591/udp": [
+                {
+                  "HostPort": "14591"
+                }
+              ],
+              "5010/udp": [
+                {
+                  "HostPort": "5010"
+                }
+              ]
+            },
+            "Binds": [
+              "/usr/blueos/extensions/it.deepex.calypso-ui:/data"
+            ]
+          }
+        }
+      },
+      "0.4.12": {
+        "identifier": "9751d36f-c299-53b3-b9b5-388e0879fc59",
+        "type": "interface",
+        "website": "https://github.com/erric0x5b/calypso-ui",
+        "images": [
+          {
+            "expanded_size": 344090482,
+            "platform": {
+              "architecture": "arm64",
+              "variant": null,
+              "os": "linux"
+            },
+            "digest": "sha256:83bb1dfe96032b4833d114de1b5de8551f6661bc2dde67aaf268cfd1349e5a1f"
+          },
+          {
+            "expanded_size": 302932264,
+            "platform": {
+              "architecture": "arm",
+              "variant": "v7",
+              "os": "linux"
+            },
+            "digest": "sha256:e5c16df6bc0c0acadce2a39ee3ad7c7c606cc00f2c9fa93927ed09f152a118e1"
+          }
+        ],
+        "authors": [
+          {
+            "name": "DeepEx",
+            "email": "support@deepex.example"
+          }
+        ],
+        "filter_tags": [
+          "rov",
+          "telemetry",
+          "control",
+          "video"
+        ],
+        "extra_links": {
+          "website": "https://github.com/erric0x5b/calypso-ui",
+          "support": "https://github.com/erric0x5b/calypso-ui/issues"
+        },
+        "tag": "0.4.12",
+        "docs": null,
+        "readme": "<h1>Calypso UI</h1>\n<p>BlueOS extension for the DeepEx Calypso ROV control interface.</p>\n<p>The extension provides the vehicle dashboard, power SCADA, telemetry widgets, mission logging, video stream display, sonar controls, diagnostics, and setup tools used by the Calypso UI backend.</p>",
+        "support": "https://github.com/erric0x5b/calypso-ui/issues",
+        "requirements": "core >= 1.1",
+        "company": {
+          "about": "ROV systems and marine exploration technologies",
+          "name": "DeepEx",
+          "email": "support@deepex.it"
+        },
+        "permissions": {
+          "ExposedPorts": {
+            "80/tcp": {},
+            "14590/udp": {},
+            "14591/udp": {},
+            "5010/udp": {}
+          },
+          "HostConfig": {
+            "ExtraHosts": [
+              "host.docker.internal:host-gateway"
+            ],
+            "PortBindings": {
+              "80/tcp": [
+                {
+                  "HostPort": ""
+                }
+              ],
+              "14590/udp": [
+                {
+                  "HostPort": "14590"
+                }
+              ],
+              "14591/udp": [
+                {
+                  "HostPort": "14591"
+                }
+              ],
+              "5010/udp": [
+                {
+                  "HostPort": "5010"
+                }
+              ]
+            },
+            "Binds": [
+              "/usr/blueos/extensions/it.deepex.calypso-ui:/data"
+            ]
+          }
+        }
+      },
       "0.4.11": {
         "identifier": "197fff7a-2239-5dd0-94da-a8b5681036e0",
         "type": "interface",
@@ -447,7 +625,7 @@
     },
     "repo_info": {
       "downloads": 0,
-      "last_updated": "2026-05-17T14:42:14Z",
+      "last_updated": "2026-06-07T15:20:16Z",
       "date_registered": "2026-05-16T00:00:00Z"
     }
   }

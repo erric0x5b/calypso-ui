@@ -2334,6 +2334,7 @@ async function init() {
                 if (msg.thr) snapshot.thr = msg.thr;
                 if (msg.att) snapshot.att = msg.att;
                 if (msg.nav) snapshot.nav = msg.nav;
+                if (msg.mav) snapshot.mav = msg.mav;
                 requestRender();
                 return;
                 }

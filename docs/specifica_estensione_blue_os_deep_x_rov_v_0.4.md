@@ -119,7 +119,7 @@ Vantaggi:
     - payload: `On` (0/1)
     - destinazione: `DST=BAT1`
   - Tracciamento MAVLink:
-    - da `HEARTBEAT`: `MAV_MODE_SAFETY_ARMED`
+    - da `HEARTBEAT`: `system_status` (`MAV_STATE_STANDBY`/`MAV_STATE_ACTIVE`) con fallback a `MAV_MODE_SAFETY_ARMED`
     - log eventi su cambio stato arm/disarm
     - warning UI se Cockpit armato con VMOT spenta
 

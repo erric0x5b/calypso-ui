@@ -12,7 +12,7 @@ Use the extension collection manifest published from this repository, or install
 the image manually:
 
 ```text
-ghcr.io/erric0x5b/calypso-ui:0.4.12
+ghcr.io/erric0x5b/calypso-ui:0.4.13
 ```
 
 The UI is served by the extension at `/ui`.

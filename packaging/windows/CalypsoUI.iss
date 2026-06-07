@@ -1,5 +1,5 @@
 #define MyAppName "Calypso UI"
-#define MyAppVersion "0.4.12"
+#define MyAppVersion "0.4.13"
 #define MyAppPublisher "DeepEx"
 #define MyAppExeName "CalypsoUI.exe"
 

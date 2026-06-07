@@ -71,6 +71,7 @@ state.setdefault("mav", {
     "drops": 0,
     "safety_armed": None,
     "base_mode": None,
+    "system_status": None,
     "last_heartbeat_ms": 0,
 })
 state.setdefault("cmd", {"pending": {}, "history": [], "last_ack": None})
@@ -532,17 +533,7 @@ def update_state(parsed: dict):
 
     if msg == "HB":
         state["nodes"][src].update({"hb": kv})
-
-    if msg == "HB":
-        up_raw = kv.get("Up", 1)
-        try:
-            up = int(up_raw) != 0
-        except Exception:
-            up = str(up_raw).strip().lower() not in ("0", "false", "off", "no")
-        state["nodes"][src]["online"] = up
         state["nodes"][src]["last_hb_ms"] = ts
-        if src in state["pods"]:
-            state["pods"][src]["online"] = up
 
     # Keep convenient per-pod connectivity flags in sync for UI.
     if src in state["pods"]:
