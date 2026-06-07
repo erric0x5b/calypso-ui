@@ -2,7 +2,7 @@
   "identifier": "it.deepex.calypso-ui",
   "name": "Calypso UI",
   "docker": "ghcr.io/erric0x5b/calypso-ui",
-  "tag": "0.4.11",
+  "tag": "0.4.12",
   "permissions": {
     "ExposedPorts": {
       "80/tcp": {},
