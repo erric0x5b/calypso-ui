@@ -8,6 +8,95 @@
     "extension_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "company_logo": "https://raw.githubusercontent.com/erric0x5b/calypso-ui/master/data/media/Logo_deepex_2026-tondo.svg",
     "versions": {
+      "0.4.14": {
+        "identifier": "7d2e8e89-a663-5df3-a6d1-d3393f7c3a0d",
+        "type": "interface",
+        "website": "https://github.com/erric0x5b/calypso-ui",
+        "images": [
+          {
+            "expanded_size": 344193667,
+            "platform": {
+              "architecture": "arm64",
+              "variant": null,
+              "os": "linux"
+            },
+            "digest": "sha256:ef00e51fb34a1f66c4fab13cc176746036753f00d6e4ff907b82dd27630b0049"
+          },
+          {
+            "expanded_size": 303058085,
+            "platform": {
+              "architecture": "arm",
+              "variant": "v7",
+              "os": "linux"
+            },
+            "digest": "sha256:0d202c722ffba63b9548bf601f89abfb90f234eaf3217aa7bf189de0db7e2ef1"
+          }
+        ],
+        "authors": [
+          {
+            "name": "DeepEx",
+            "email": "support@deepex.example"
+          }
+        ],
+        "filter_tags": [
+          "rov",
+          "telemetry",
+          "control",
+          "video"
+        ],
+        "extra_links": {
+          "website": "https://github.com/erric0x5b/calypso-ui",
+          "support": "https://github.com/erric0x5b/calypso-ui/issues"
+        },
+        "tag": "0.4.14",
+        "docs": null,
+        "readme": "<h1>Calypso UI</h1>\n<p>BlueOS extension for the DeepEx Calypso ROV control interface.</p>\n<p>The extension provides the vehicle dashboard, power SCADA, telemetry widgets, mission logging, video stream display, sonar controls, diagnostics, and setup tools used by the Calypso UI backend.</p>",
+        "support": "https://github.com/erric0x5b/calypso-ui/issues",
+        "requirements": "core >= 1.1",
+        "company": {
+          "about": "ROV systems and marine exploration technologies",
+          "name": "DeepEx",
+          "email": "support@deepex.it"
+        },
+        "permissions": {
+          "ExposedPorts": {
+            "80/tcp": {},
+            "14590/udp": {},
+            "14591/udp": {},
+            "5010/udp": {}
+          },
+          "HostConfig": {
+            "ExtraHosts": [
+              "host.docker.internal:host-gateway"
+            ],
+            "PortBindings": {
+              "80/tcp": [
+                {
+                  "HostPort": ""
+                }
+              ],
+              "14590/udp": [
+                {
+                  "HostPort": "14590"
+                }
+              ],
+              "14591/udp": [
+                {
+                  "HostPort": "14591"
+                }
+              ],
+              "5010/udp": [
+                {
+                  "HostPort": "5010"
+                }
+              ]
+            },
+            "Binds": [
+              "/usr/blueos/extensions/it.deepex.calypso-ui:/data"
+            ]
+          }
+        }
+      },
       "0.4.13": {
         "identifier": "feb8dcfb-805a-5875-b60f-837ee52a323c",
         "type": "interface",
@@ -625,7 +714,7 @@
     },
     "repo_info": {
       "downloads": 0,
-      "last_updated": "2026-06-07T15:20:16Z",
+      "last_updated": "2026-06-29T15:39:19Z",
       "date_registered": "2026-05-16T00:00:00Z"
     }
   }

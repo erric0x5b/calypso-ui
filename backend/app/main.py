@@ -111,12 +111,6 @@ MAVLINK_UDP_ENABLED = MAVLINK_ENABLED and (not MAVLINK_WS_ENABLED) and MAVLINK_P
 MAV_MODE_FLAG_SAFETY_ARMED = int(
     getattr(getattr(mavutil, "mavlink", object()), "MAV_MODE_FLAG_SAFETY_ARMED", 0x80)
 ) if mavutil is not None else 0x80
-MAV_STATE_STANDBY = int(
-    getattr(getattr(mavutil, "mavlink", object()), "MAV_STATE_STANDBY", 3)
-) if mavutil is not None else 3
-MAV_STATE_ACTIVE = int(
-    getattr(getattr(mavutil, "mavlink", object()), "MAV_STATE_ACTIVE", 4)
-) if mavutil is not None else 4
 
 # Ensure log dir exists early
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -154,7 +148,7 @@ def register_service():
         "description": "DeepEx ROV UI",
         "icon": "mdi-submarine",
         "company": "DeepEx",
-        "version": "0.4.12",
+        "version": "0.4.14",
         "new_page": True,
         "avoid_iframes": True,
         "works_in_relative_paths": True,
@@ -539,44 +533,9 @@ def parse_safety_armed_from_base_mode(base_mode) -> Optional[int]:
 
 
 def parse_armed_from_system_status(system_status) -> Optional[int]:
-    if system_status is None:
-        return None
-
-    if isinstance(system_status, dict):
-        raw = (
-            system_status.get("value")
-            if system_status.get("value") is not None
-            else system_status.get("raw")
-        )
-        name = system_status.get("name") or system_status.get("label") or system_status.get("status")
-        parsed_name = parse_armed_from_system_status(name)
-        if parsed_name is not None:
-            return parsed_name
-        system_status = raw
-
-    if isinstance(system_status, str):
-        tok = system_status.strip()
-        if not tok:
-            return None
-        upper = tok.upper()
-        if "MAV_STATE_ACTIVE" in upper or upper == "ACTIVE":
-            return 1
-        if "MAV_STATE_STANDBY" in upper or upper == "STANDBY":
-            return 0
-        try:
-            system_status = int(tok, 0)
-        except Exception:
-            return None
-
-    try:
-        st = int(system_status)
-    except Exception:
-        return None
-
-    if st == MAV_STATE_ACTIVE:
-        return 1
-    if st == MAV_STATE_STANDBY:
-        return 0
+    # MAVLink system_status reports the autopilot state (for example ACTIVE or
+    # STANDBY), not motor arming. Arming must come from base_mode's
+    # MAV_MODE_FLAG_SAFETY_ARMED bit or an explicit safety_armed field.
     return None
 
 

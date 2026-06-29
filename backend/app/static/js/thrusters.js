@@ -1,13 +1,13 @@
 import { setHTML } from './utils.js?v=16';
 
 export const THR_MAP = [
-  { name:"TH1", th:"TH1", escId:1, label:"1", pos:"FL", side:"L", order:1 },
-  { name:"TH6", th:"TH6", escId:6, label:"6", pos:"ML", side:"L", order:2 },
-  { name:"TH3", th:"TH3", escId:3, label:"3", pos:"RL", side:"L", order:3 },
+  { name:"TH2", th:"TH2", escId:2, label:"2", pos:"FL", side:"L", order:1 },
+  { name:"TH6", th:"TH6", escId:6, label:"6", pos:"VL", side:"L", order:2 },
+  { name:"TH4", th:"TH4", escId:4, label:"4", pos:"RL", side:"L", order:3 },
 
-  { name:"TH2", th:"TH2", escId:2, label:"2", pos:"FR", side:"R", order:1 },
-  { name:"TH5", th:"TH5", escId:5, label:"5", pos:"MR", side:"R", order:2 },
-  { name:"TH4", th:"TH4", escId:4, label:"4", pos:"RR", side:"R", order:3 },
+  { name:"TH1", th:"TH1", escId:1, label:"1", pos:"FR", side:"R", order:1 },
+  { name:"TH5", th:"TH5", escId:5, label:"5", pos:"VR", side:"R", order:2 },
+  { name:"TH3", th:"TH3", escId:3, label:"3", pos:"RR", side:"R", order:3 },
 ];
 
 export function ringSvg(pct, status){
@@ -134,7 +134,7 @@ export function renderMotorsRingsAdvanced(state){
   const left = THR_MAP
     .filter(x => x.side === "L")
     .sort((a,b)=>a.order-b.order)
-    .map(x => thrusterRingSvg(`${x.label} ${x.pos}`, getCmd(x.th), getRpm(x.esc, x.th)))
+    .map(x => thrusterRingSvg(`${x.label} ${x.pos}`, getCmd(x.th), getRpm(x.escId, x.th)))
     .join("");
 
   const right = THR_MAP
